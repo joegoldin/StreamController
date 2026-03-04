@@ -2,7 +2,7 @@ from GtkHelper.ComboRow import ComboRow as Combo, BaseComboRowItem
 from GtkHelper.GenerativeUI.GenerativeUI import GenerativeUI
 
 import gi
-from gi.repository import Gtk, Adw, Gio, GObject
+from gi.repository import Gtk, Adw
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -179,11 +179,11 @@ class ComboRow(GenerativeUI[BaseComboRowItem]):
                  trigger_callback: bool = True):
         """Repopulates the combo box with new items and optionally updates the selection."""
         converted = self.widget.convert_item_list(items)
-        new_model = Gio.ListStore(item_type=GObject.GObject)
+        self.widget.set_model(None)
+        self.widget.model.remove_all()
         for item in converted:
-            new_model.append(item)
-        self.widget.model = new_model
-        self.widget.set_model(new_model)
+            self.widget.model.append(item)
+        self.widget.set_model(self.widget.model)
         selected_item = self.widget.set_selected_item(selected_item)
 
         self._handle_value_changed(selected_item, update_settings, trigger_callback)

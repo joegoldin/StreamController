@@ -53,7 +53,14 @@ class ItemListComboRow(Adw.ComboRow):
         self.model = Gio.ListStore(item_type=ItemListComboRowListItem)
         self.factory = Gtk.SignalListItemFactory()
 
-        self.set_items(items)
+        # Validate and populate model BEFORE binding
+        keys = set()
+        for i in self.__items:
+            if i.key in keys:
+                raise ValueError(f"key '{i.key}' was given more than once in item list")
+            keys.add(i.key)
+        for item in self.__items:
+            self.model.append(item)
 
         self.factory.connect("setup", self.__on_factory_setup)
         self.factory.connect("bind", self.__on_factory_bind)
@@ -69,11 +76,11 @@ class ItemListComboRow(Adw.ComboRow):
                 raise ValueError(f"key '{i.key}' was given more than once in item list")
             keys.add(i.key)
 
-        new_model = Gio.ListStore(item_type=ItemListComboRowListItem)
+        self.set_model(None)
+        self.model.remove_all()
         for item in self.__items:
-            new_model.append(item)
-        self.model = new_model
-        self.set_model(new_model)
+            self.model.append(item)
+        self.set_model(self.model)
 
     def __on_factory_setup(self, factory, list_item):
         label = Gtk.Label()
