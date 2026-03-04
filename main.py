@@ -25,6 +25,7 @@ patcher.patch()
 import sys
 from loguru import logger as log
 import os
+import fcntl
 import time
 import asyncio
 import threading
@@ -533,14 +534,41 @@ def make_api_calls():
 
 
     
+_lock_file = None
+
+def acquire_instance_lock():
+    """Acquire an exclusive file lock to prevent multiple instances.
+
+    Uses fcntl.flock() which is automatically released when the process
+    exits (even on crash/SIGKILL), so there are no stale lock issues.
+    Returns True if the lock was acquired, False if another instance holds it.
+    """
+    global _lock_file
+    lock_path = os.path.join(gl.DATA_PATH, ".streamcontroller.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    _lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_file.write(str(os.getpid()))
+        _lock_file.flush()
+        return True
+    except OSError:
+        _lock_file.close()
+        _lock_file = None
+        return False
+
 @log.catch
 def main():
     # Handle listing commands first (they don't need full initialization)
     if handle_listing_commands():
         return
-    
+
     if make_api_calls():
         return
+
+    if not acquire_instance_lock():
+        log.error("Another StreamController instance is already running (lock held). Exiting.")
+        sys.exit(1)
 
     gsk_render_env_var = os.environ.get("GSK_RENDERER")
     if gsk_render_env_var != "ngl":
