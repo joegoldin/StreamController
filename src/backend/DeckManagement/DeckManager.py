@@ -103,12 +103,13 @@ class DeckManager:
             GLib.idle_add(gl.app.main_win.sidebar.page_selector.update)
 
         if recursive_hasattr(gl, "app.main_win"):
-            gl.app.main_win.check_for_errors()
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
     def remove_remote_decks(self):
-        for controller in self.remote_deck_manager.deck_controllers:
+        for controller in list(self.remote_deck_manager.deck_controllers):
             self.remove_controller(controller)
-        gl.app.main_win.check_for_errors()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
         self.remote_deck_manager.stop()
 
     def load_decks(self):
@@ -166,7 +167,7 @@ class DeckManager:
                 if recursive_hasattr(gl, "app.main_win.header_bar.deckSwitcher"):
                     gl.app.main_win.header_bar.deckSwitcher.set_show_switcher(False)
         if hasattr(gl.app, "main_win"):
-            gl.app.main_win.check_for_errors()
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
     def on_connect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} connected")
@@ -188,7 +189,8 @@ class DeckManager:
             # Add deck
             self.add_newly_connected_deck(deck)
 
-        gl.app.main_win.check_for_errors()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
 
     def on_disconnect(self, device_id, device_info):
@@ -196,18 +198,19 @@ class DeckManager:
         if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
             return
 
-        for controller in self.deck_controller:
+        for controller in list(self.deck_controller):
             if not controller.deck.connected():
                 self.remove_controller(controller)
 
-        gl.app.main_win.check_for_errors()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
     def remove_controller(self, deck_controller: DeckController) -> None:
-        self.deck_controller.remove(deck_controller)
+        if deck_controller in self.deck_controller:
+            self.deck_controller.remove(deck_controller)
         if recursive_hasattr(gl, "app.main_win.leftArea.deck_stack"):
-            gl.app.main_win.leftArea.deck_stack.remove_page(deck_controller)
+            GLib.idle_add(gl.app.main_win.leftArea.deck_stack.remove_page, deck_controller)
         deck_controller.delete()
-        del deck_controller
 
     def get_controller_for_deck(self, deck: StreamDeck) -> DeckController | None:
         for controller in self.deck_controller:
@@ -231,9 +234,8 @@ class DeckManager:
         if is_fake:
             self.fake_deck_controller.append(deck_controller)
 
-        if not recursive_hasattr(gl, "app.main_win."):
-            return
-        gl.app.main_win.check_for_errors()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
     def close_all(self):
         log.info("Closing all decks")
@@ -321,10 +323,11 @@ class FlatpakDeckDisconnectThread(threading.Thread):
     def run(self):
         while gl.threads_running:
             time.sleep(2)
-            for controller in self.deck_manager.deck_controller:
+            for controller in list(self.deck_manager.deck_controller):
                 if not controller.deck.connected():
                     self.deck_manager.remove_controller(controller)
-                    gl.app.main_win.check_for_errors()
+                    if recursive_hasattr(gl, "app.main_win"):
+                        GLib.idle_add(gl.app.main_win.check_for_errors)
 
 class DetectResumeThread(threading.Thread):
     def __init__(self, deck_manager: DeckManager):

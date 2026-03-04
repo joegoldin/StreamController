@@ -67,9 +67,12 @@ class PluginPage(StorePage):
                 section = self.compatible_section
             else:
                 section = self.incompatible_section
-            GLib.idle_add(section.append_child, PluginPreview(plugin_page=self, plugin_data=plugin))
+            GLib.idle_add(self._create_and_add_plugin, section, plugin)
 
         self.set_loaded()
+
+    def _create_and_add_plugin(self, section, plugin):
+        section.append_child(PluginPreview(plugin_page=self, plugin_data=plugin))
 
     def check_required_version(self, app_version_to_check: str, is_min_app_version: bool = False):
         if is_min_app_version:

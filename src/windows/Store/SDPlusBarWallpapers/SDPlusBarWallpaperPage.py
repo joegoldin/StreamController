@@ -64,9 +64,12 @@ class SDPlusBarWallpaperPage(StorePage):
                 section = self.compatible_section
             else:
                 section = self.incompatible_section
-            GLib.idle_add(section.append_child, SDPlusBarWallpaperPreview(wallpaper_page=self, wallpaper_data=wallpaper))
+            GLib.idle_add(self._create_and_add_wallpaper, section, wallpaper)
 
         self.set_loaded()
+
+    def _create_and_add_wallpaper(self, section, wallpaper):
+        section.append_child(SDPlusBarWallpaperPreview(wallpaper_page=self, wallpaper_data=wallpaper))
 
 
 class SDPlusBarWallpaperPreview(StorePreview):

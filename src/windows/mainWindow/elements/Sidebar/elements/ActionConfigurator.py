@@ -465,13 +465,13 @@ class EventAssignerRow(Adw.ComboRow):
     def set_available_events(self, events: list[EventAssigner]):
         self._disconnect_signal()
         model = Gio.ListStore.new(EventAssignerRowItem)
-        self.set_model(model)
 
-        model.append(EventAssignerRowItem(None))
-
+        items = [EventAssignerRowItem(None)]
         for event in events:
-            model.append(EventAssignerRowItem(event))
+            items.append(EventAssignerRowItem(event))
+        model.splice(0, 0, items)
 
+        self.set_model(model)
         self.set_selected(0)
         self._connect_signal()
 
