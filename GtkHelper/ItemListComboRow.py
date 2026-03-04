@@ -62,15 +62,14 @@ class ItemListComboRow(Adw.ComboRow):
         self.set_factory(self.factory)
 
     def set_items(self, items: Sequence[ItemListComboRowListItem]):
-        self.model.remove_all()
         keys = set()
         self.__items = list(items)
         for i in self.__items:
             if i.key in keys:
                 raise ValueError(f"key '{i.key}' was given more than once in item list")
             keys.add(i.key)
-            self.model.append(i)
 
+        self.model.splice(0, self.model.get_n_items(), self.__items)
         self.set_model(self.model) # Update ui
 
     def __on_factory_setup(self, factory, list_item):

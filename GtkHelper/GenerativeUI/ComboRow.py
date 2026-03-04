@@ -178,8 +178,8 @@ class ComboRow(GenerativeUI[BaseComboRowItem]):
                  update_settings: bool = False,
                  trigger_callback: bool = True):
         """Repopulates the combo box with new items and optionally updates the selection."""
-        self.widget.remove_all_items()
-        self.widget.add_items(items)
+        converted = self.widget.convert_item_list(items)
+        self.widget.model.splice(0, self.widget.model.get_n_items(), converted)
         selected_item = self.widget.set_selected_item(selected_item)
 
         self._handle_value_changed(selected_item, update_settings, trigger_callback)
