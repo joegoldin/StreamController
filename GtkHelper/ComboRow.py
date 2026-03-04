@@ -120,7 +120,8 @@ class ComboRow(Adw.ComboRow):
     def add_items(self, items: list[BaseComboRowItem] | list[str]):
         converted_list = self.convert_item_list(items)
 
-        self.model.splice(self.model.get_n_items(), 0, converted_list)
+        for item in converted_list:
+            self.model.append(item)
 
     def remove_item_at_index(self, index: int):
         size = self.model.get_n_items()
@@ -144,7 +145,8 @@ class ComboRow(Adw.ComboRow):
             log.error("Not able to remove Items!")
             return
 
-        self.model.splice(start, amount, [])
+        for _ in range(amount):
+            self.model.remove(start)
 
     def remove_all_items(self):
         self.model.remove_all()
@@ -172,7 +174,11 @@ class ComboRow(Adw.ComboRow):
         return self.get_item_at(selected_index)
 
     def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str = ""):
-        self.model.splice(0, self.model.get_n_items(), items)
+        new_model = Gio.ListStore(item_type=GObject.GObject)
+        for item in items:
+            new_model.append(item)
+        self.model = new_model
+        self.set_model(new_model)
         self.set_selected_item(selected_item)
 
     def _on_factory_setup(self, factory, list_item):

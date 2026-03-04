@@ -69,8 +69,11 @@ class ItemListComboRow(Adw.ComboRow):
                 raise ValueError(f"key '{i.key}' was given more than once in item list")
             keys.add(i.key)
 
-        self.model.splice(0, self.model.get_n_items(), self.__items)
-        self.set_model(self.model) # Update ui
+        new_model = Gio.ListStore(item_type=ItemListComboRowListItem)
+        for item in self.__items:
+            new_model.append(item)
+        self.model = new_model
+        self.set_model(new_model)
 
     def __on_factory_setup(self, factory, list_item):
         label = Gtk.Label()
