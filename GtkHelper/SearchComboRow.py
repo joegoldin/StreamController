@@ -109,10 +109,7 @@ class SearchComboRow(Adw.PreferencesRow):
         return self.search_text.upper() in item.display_label.upper()
 
     def populate(self, list: list[SearchComboRowItem], selected_index: int = 0):
-        self.model_widget.remove_all()
-
-        for item in list:
-            self.model_widget.append(item)
+        self.model_widget.splice(0, self.model_widget.get_n_items(), list)
 
         self.dropdown.set_selected(selected_index)
 
