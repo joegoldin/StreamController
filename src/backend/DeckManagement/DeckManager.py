@@ -128,8 +128,15 @@ class DeckManager:
             except:
                 log.error("Failed to open deck. Maybe it's already connected to another instance?")
                 continue
-            deck_controller = DeckController(self, deck)
-            self.deck_controller.append(deck_controller)
+            try:
+                deck_controller = DeckController(self, deck)
+                self.deck_controller.append(deck_controller)
+            except Exception as e:
+                log.error(f"Failed to initialize deck controller: {e}. Skipping this deck.")
+                try:
+                    deck.close()
+                except:
+                    pass
 
     def get_fake_deck_types(self) -> list[str]:
         """
@@ -246,7 +253,15 @@ class DeckManager:
                 return controller
 
     def add_newly_connected_deck(self, deck:StreamDeck, is_fake: bool = False):
-        deck_controller = DeckController(self, deck)
+        try:
+            deck_controller = DeckController(self, deck)
+        except Exception as e:
+            log.error(f"Failed to initialize deck controller for newly connected deck: {e}")
+            try:
+                deck.close()
+            except:
+                pass
+            return
 
         # Check if ui is loaded - if not it will grab the controller automatically
         if recursive_hasattr(gl, "app.main_win.leftArea.deck_stack"):
