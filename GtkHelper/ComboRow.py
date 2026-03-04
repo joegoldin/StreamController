@@ -140,12 +140,11 @@ class ComboRow(Adw.ComboRow):
     def remove_items(self, start: int, amount: int):
         size = self.model.get_n_items()
 
-        if not (0 <= start < size and start + amount < size):
+        if not (0 <= start < size and start + amount <= size):
             log.error("Not able to remove Items!")
             return
 
-        for i in range(amount + 1):
-            self.model.remove(start)
+        self.model.splice(start, amount, [])
 
     def remove_all_items(self):
         self.model.remove_all()
@@ -173,8 +172,7 @@ class ComboRow(Adw.ComboRow):
         return self.get_item_at(selected_index)
 
     def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str = ""):
-        self.remove_all_items()
-        self.add_items(items)
+        self.model.splice(0, self.model.get_n_items(), items)
         self.set_selected_item(selected_item)
 
     def _on_factory_setup(self, factory, list_item):
