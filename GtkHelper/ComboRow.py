@@ -81,13 +81,18 @@ class ComboRow(Adw.ComboRow):
         factory.connect("setup", self._on_factory_setup)
         factory.connect("bind", self._on_factory_bind)
 
+        # Populate model BEFORE binding to widget to avoid double set_model
+        converted = self.convert_item_list(items)
+        for item in converted:
+            self.model.append(item)
+
         self.set_model(self.model)
         self.set_factory(factory)
 
         self.set_enable_search(enable_search)
         self.set_expression(Gtk.PropertyExpression.new(BaseComboRowItem, None, "filter_value"))
 
-        self.populate(self.convert_item_list(items), default_selection)
+        self.set_selected_item(default_selection)
 
     def convert_item_list(self, items):
         converted_list: list[BaseComboRowItem] = []
@@ -174,11 +179,11 @@ class ComboRow(Adw.ComboRow):
         return self.get_item_at(selected_index)
 
     def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str = ""):
-        new_model = Gio.ListStore(item_type=GObject.GObject)
+        self.set_model(None)
+        self.model.remove_all()
         for item in items:
-            new_model.append(item)
-        self.model = new_model
-        self.set_model(new_model)
+            self.model.append(item)
+        self.set_model(self.model)
         self.set_selected_item(selected_item)
 
     def _on_factory_setup(self, factory, list_item):
