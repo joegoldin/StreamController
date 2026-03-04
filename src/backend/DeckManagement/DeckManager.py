@@ -85,7 +85,7 @@ class DeckManager:
 
     def check_for_errors_if_window_ready(self):
         if recursive_hasattr(gl, "app.main_win.check_for_errors"):
-            gl.app.main_win.check_for_errors()
+            GLib.idle_add(gl.app.main_win.check_for_errors)
 
     def load_remote_decks(self):
         print(" load remote decks")
@@ -106,7 +106,7 @@ class DeckManager:
         self.check_for_errors_if_window_ready()
 
     def remove_remote_decks(self):
-        for controller in self.remote_deck_manager.deck_controllers:
+        for controller in list(self.remote_deck_manager.deck_controllers):
             self.remove_controller(controller)
         self.check_for_errors_if_window_ready()
         self.remote_deck_manager.stop()
@@ -212,14 +212,15 @@ class DeckManager:
         if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
             return
 
-        for controller in self.deck_controller:
+        for controller in list(self.deck_controller):
             if not controller.deck.connected():
                 self.remove_controller(controller)
 
         self.check_for_errors_if_window_ready()
 
     def remove_controller(self, deck_controller: DeckController) -> None:
-        self.deck_controller.remove(deck_controller)
+        if deck_controller in self.deck_controller:
+            self.deck_controller.remove(deck_controller)
         if recursive_hasattr(gl, "app.main_win.leftArea.deck_stack"):
             # remove_controller() is called from non-GTK threads (e.g.
             # FlatpakDeckDisconnectThread, udev callbacks); route the GTK call
@@ -388,7 +389,7 @@ class FlatpakDeckDisconnectThread(threading.Thread):
     def run(self):
         while gl.threads_running:
             time.sleep(2)
-            for controller in self.deck_manager.deck_controller:
+            for controller in list(self.deck_manager.deck_controller):
                 if not controller.deck.connected():
                     self.deck_manager.remove_controller(controller)
                     self.deck_manager.check_for_errors_if_window_ready()

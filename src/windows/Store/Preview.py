@@ -221,6 +221,7 @@ class StorePreview(Gtk.FlowBoxChild):
     def set_install_state(self, state: int):
         """
         Sets the state of the install button.
+        Thread-safe: marshals GTK calls to the main thread.
 
         Args:
             state (int): The state to set. Possible values:
@@ -229,6 +230,9 @@ class StorePreview(Gtk.FlowBoxChild):
                 - 2: Sets to update
         """
         self.install_state = state
+        GLib.idle_add(self._apply_install_state, state)
+
+    def _apply_install_state(self, state: int):
         if state == 0:
             self.install_uninstall_button.set_icon_name("folder-download-symbolic")
 

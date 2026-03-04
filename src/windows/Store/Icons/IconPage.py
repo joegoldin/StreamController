@@ -66,9 +66,12 @@ class IconPage(StorePage):
                 section = self.compatible_section
             else:
                 section = self.incompatible_section
-            GLib.idle_add(section.append_child, IconPreview(icon_page=self, icon_data=icon))
+            GLib.idle_add(self._create_and_add_icon, section, icon)
 
         self.set_loaded()
+
+    def _create_and_add_icon(self, section, icon):
+        section.append_child(IconPreview(icon_page=self, icon_data=icon))
 
 
 class IconPreview(StorePreview):
