@@ -109,7 +109,11 @@ class SearchComboRow(Adw.PreferencesRow):
         return self.search_text.upper() in item.display_label.upper()
 
     def populate(self, list: list[SearchComboRowItem], selected_index: int = 0):
-        self.model_widget.splice(0, self.model_widget.get_n_items(), list)
+        new_model = Gio.ListStore(item_type=SearchComboRowItem)
+        for item in list:
+            new_model.append(item)
+        self.model_widget = new_model
+        self.sort_model_widget.set_model(new_model)
 
         self.dropdown.set_selected(selected_index)
 
