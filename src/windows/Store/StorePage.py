@@ -121,10 +121,10 @@ class StorePage(Gtk.Stack):
             self.store.back_button.set_visible(False)
 
     def show_connection_error(self):
-        self.set_visible_child(self.no_connection_page)
+        GLib.idle_add(self.set_visible_child, self.no_connection_page)
 
     def hide_connection_error(self):
-        self.set_visible_child(self.main_box)
+        GLib.idle_add(self.set_visible_child, self.main_box)
 
     def check_required_version(self, app_version_to_check: str, is_min_app_version: bool = False):
         if is_min_app_version:
