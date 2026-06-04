@@ -1,0 +1,5 @@
+[submodule "StreamDock-Device-SDK"]
+	path = StreamDock-Device-SDK
+	url = https://github.com/joegoldin/StreamDock-Device-SDK.git
+	branch = main
+	shallow = true
