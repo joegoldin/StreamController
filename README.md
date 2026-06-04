@@ -39,10 +39,10 @@ Support for devices from other manufacturers is experimental:
 
 ### MiraBox StreamDock (Stream Deck clones)
 
-StreamController also supports MiraBox StreamDock devices via the
-[StreamDock-Device-SDK](https://github.com/joegoldin/StreamDock-Device-SDK)
-submodule, using its pure-Python, reverse-engineered HID transport (no
-closed-source vendor libraries required):
+StreamController also supports MiraBox StreamDock devices with a self-contained,
+pure-Python implementation of their reverse-engineered HID protocol
+(`src/backend/DeckManagement/StreamDock`) — no closed-source vendor libraries
+and no extra dependencies beyond `hidapi`:
 
 - StreamDock 293 / 293 V3 / 293s / 293s V3 (15 keys)
 - StreamDock N4 / N4 Pro (keys + knobs)
@@ -52,8 +52,7 @@ closed-source vendor libraries required):
 - StreamDock K1 Pro (6 keys + 3 knobs)
 
 The primary key grid and rotary knobs are supported; secondary LCD strips and
-the SD+-style touch strip are not yet mapped. After cloning, fetch the SDK with
-`git submodule update --init --recursive`.
+the SD+-style touch strip are not yet mapped.
 
 ## Features
 
