@@ -6,6 +6,8 @@ from gi.repository import Gtk, Adw, Gio, GObject
 
 from loguru import logger as log
 
+from GtkHelper.main_thread import run_on_main
+
 class BaseComboRowItem(GObject.GObject):
     def __init__(self):
         super().__init__()
@@ -105,6 +107,7 @@ class ComboRow(Adw.ComboRow):
 
         return converted_list
 
+    @run_on_main
     def set_selected_item(self, item: BaseComboRowItem | str):
         selected_item_index = 0
 
@@ -116,18 +119,21 @@ class ComboRow(Adw.ComboRow):
         self.set_selected(selected_item_index)
         return self.get_item_at(selected_item_index)
 
+    @run_on_main
     def add_item(self, combo_row_item: BaseComboRowItem | str):
         if isinstance(combo_row_item, str):
             combo_row_item = ComboRowItem(combo_row_item)
 
         self.model.append(combo_row_item)
 
+    @run_on_main
     def add_items(self, items: list[BaseComboRowItem] | list[str]):
         converted_list = self.convert_item_list(items)
 
         for item in converted_list:
             self.model.append(item)
 
+    @run_on_main
     def remove_item_at_index(self, index: int):
         size = self.model.get_n_items()
 
@@ -137,12 +143,14 @@ class ComboRow(Adw.ComboRow):
 
         self.model.remove(index)
 
+    @run_on_main
     def remove_item(self, item: BaseComboRowItem | str):
         for index in range(self.model.get_n_items()):
             if self.model.get_item(index) == item:
                 self.remove_item_at_index(index)
                 break
 
+    @run_on_main
     def remove_items(self, start: int, amount: int):
         size = self.model.get_n_items()
 
@@ -153,6 +161,7 @@ class ComboRow(Adw.ComboRow):
         for _ in range(amount):
             self.model.remove(start)
 
+    @run_on_main
     def remove_all_items(self):
         self.model.remove_all()
 
@@ -178,6 +187,7 @@ class ComboRow(Adw.ComboRow):
 
         return self.get_item_at(selected_index)
 
+    @run_on_main
     def populate(self, items: list[BaseComboRowItem], selected_item: BaseComboRowItem | str = ""):
         self.set_model(None)
         self.model.remove_all()

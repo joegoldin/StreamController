@@ -15,6 +15,8 @@ from gi.repository import Gtk, Adw, Gio, GObject
 
 from loguru import logger as log
 
+from GtkHelper.main_thread import run_on_main
+
 @deprecated("This has been deprecated in favor of GtkHelper.ComboRow")
 class SearchComboRowItem(GObject.Object):
     __gtype_name__ = 'SearchComboRowItem'
@@ -108,6 +110,7 @@ class SearchComboRow(Adw.PreferencesRow):
     def _do_filter_widget_view(self, item, filter_list_model):
         return self.search_text.upper() in item.display_label.upper()
 
+    @run_on_main
     def populate(self, list: list[SearchComboRowItem], selected_index: int = 0):
         self.dropdown.set_model(None)
         self.model_widget.remove_all()
@@ -117,6 +120,7 @@ class SearchComboRow(Adw.PreferencesRow):
 
         self.dropdown.set_selected(selected_index)
 
+    @run_on_main
     def set_selected_item(self, index: int):
         if index < 0:
             return

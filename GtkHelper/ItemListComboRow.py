@@ -20,6 +20,8 @@ from gi.repository import Gtk, Adw, Gio, GObject
 
 from loguru import logger as log
 
+from GtkHelper.main_thread import run_on_main
+
 
 @deprecated("This has been deprecated in favor of GtkHelper.ComboRow")
 class ItemListComboRowListItem(GObject.Object):
@@ -68,6 +70,7 @@ class ItemListComboRow(Adw.ComboRow):
         self.set_model(self.model)
         self.set_factory(self.factory)
 
+    @run_on_main
     def set_items(self, items: Sequence[ItemListComboRowListItem]):
         keys = set()
         self.__items = list(items)
@@ -91,6 +94,7 @@ class ItemListComboRow(Adw.ComboRow):
         entry: ItemListComboRowListItem = list_item.get_item()
         label.set_text(entry.name)
 
+    @run_on_main
     def set_selected_item_by_key(self, key: str, default: int | None = None):
         """
         Call when loading user-settings, to pre-select the correkt ListItem
