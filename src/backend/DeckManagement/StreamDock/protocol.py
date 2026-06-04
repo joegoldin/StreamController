@@ -5,6 +5,11 @@ Speaks the StreamDock ``CRT`` HID protocol directly via the ``hid`` (hidapi)
 package -- no closed-source vendor libraries. The protocol was reverse
 engineered; this is a cleaned, StreamController-focused port of that work.
 
+Attribution: the pure-Python StreamDock HID transport this module is based on
+was reverse engineered and contributed by Philip Huppert (GitHub: Phaeilo) in
+"Pure Python HID transport implementation":
+https://github.com/MiraboxSpace/StreamDock-Device-SDK/pull/76
+
 Wire format: every command is an output report beginning with a 5-byte header
 (``b"CRT\\x00\\x00"`` by default) followed by a 3-letter ASCII command and
 optional big-endian parameters, zero-padded to the report size. Bulk payloads
