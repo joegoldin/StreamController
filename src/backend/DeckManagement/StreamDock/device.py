@@ -160,9 +160,21 @@ class StreamDockDevice:
         while self._run:
             try:
                 arr = self.hid.read(timeout_ms=100)
+            except Exception as e:
+                # A read error usually means the device went away. Back off so we
+                # don't spin a CPU core; close()/the disconnect watcher will stop
+                # this thread shortly.
+                if self._run:
+                    log.error(f"StreamDock read error (device disconnected?): {e}")
+                    time.sleep(0.1)
+                continue
+            # None is a benign read timeout (already throttled by timeout_ms).
+            if arr is None:
+                continue
+            try:
                 self._handle_report(arr)
             except Exception as e:
-                log.error(f"StreamDock read loop error: {e}")
+                log.error(f"StreamDock report handling error: {e}")
 
     def _heartbeat_loop(self):
         time.sleep(1.0)  # let the reader settle first
