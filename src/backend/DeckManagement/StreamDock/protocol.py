@@ -107,15 +107,21 @@ class StreamDockHID:
             if self._device is None:
                 return
             pkt = crt + cmd.encode("ascii") + params
+            # NOTE: hidapi treats the first byte of write() as the HID report id.
+            # When it is 0x00 the byte is stripped before transmission; when it
+            # is non-zero the whole buffer is sent verbatim. Command packets here
+            # always start with the ``CRT`` header (first byte 'C' = 0x43, never
+            # zero), so the device receives the bytes exactly as written -- we
+            # must NOT prepend a separate report-id byte. (Bulk chunks that start
+            # with 0x00 are compensated below.)
             self._device.write(self._pad(pkt))
 
             if bulk:
                 size = self._report_size
                 for i in range(0, len(bulk), size):
                     chunk = bulk[i:i + size]
-                    # hidapi drops a leading null byte on some platforms; if the
-                    # chunk starts with 0x00 we prepend an extra one so the device
-                    # still receives the intended bytes.
+                    # A chunk starting with 0x00 would have that byte stripped as
+                    # a report id, so prepend an extra 0x00 to preserve the data.
                     prefix = b"\x00" if chunk[:1] == b"\x00" else b""
                     self._device.write(self._pad(prefix + chunk))
 
@@ -123,21 +129,25 @@ class StreamDockHID:
     # Read
     # ------------------------------------------------------------------ #
     def read(self, timeout_ms: int = 100) -> Optional[bytes]:
+        """Read one input report. Returns None on timeout; raises on HID error.
+
+        The caller (the device reader thread) distinguishes a benign timeout
+        (None) from a real error (exception, e.g. the device was unplugged) so
+        it can back off instead of spinning.
+        """
         if self._device is None:
             return None
-        try:
-            size = max(self._input_report_size, 1024) if self._input_report_size else 1024
-            data = self._device.read(size, timeout_ms=timeout_ms)
-            return bytes(data) if data else None
-        except Exception:
-            return None
+        size = max(self._input_report_size, 1024) if self._input_report_size else 1024
+        data = self._device.read(size, timeout_ms=timeout_ms)
+        return bytes(data) if data else None
 
     def get_firmware_version(self) -> str:
         if self._device is None:
             return ""
         try:
-            buf = bytes([self._report_id]) + b"\x00" * self._report_size
-            result = self._device.get_input_report(buf)
+            # hidapi: get_input_report(report_num, max_length) -> list[int],
+            # with the report id as the first returned byte.
+            result = self._device.get_input_report(self._report_id, self._report_size)
             raw = bytes(result[1:]).split(b"\x00")[0]
             return raw.decode("utf-8", errors="ignore") if raw else ""
         except Exception:
