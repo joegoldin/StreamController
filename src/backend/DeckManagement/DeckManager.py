@@ -35,6 +35,10 @@ from src.backend.PageManagement.PageManagerBackend import PageManagerBackend
 from src.backend.SettingsManager import SettingsManager
 from src.backend.DeckManagement.HelperMethods import get_sys_param_value, recursive_hasattr
 from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
+from src.backend.DeckManagement.StreamDockDeck import (
+    enumerate_stream_dock_decks,
+    STREAMDOCK_VENDOR_ID_STRINGS,
+)
 
 from src.backend.DeckManagement.beta_resume import _read as beta_read
 
@@ -121,7 +125,10 @@ class DeckManager:
     def load_hardware_decks(self):
         if gl.IS_MAC:
             return
-        decks=DeviceManager().enumerate()
+        decks = list(DeviceManager().enumerate())
+        # MiraBox StreamDock devices (Stream Deck clones) speak their own HID
+        # protocol; they are wrapped to look like a StreamDeck device.
+        decks.extend(enumerate_stream_dock_decks())
         for deck in decks:
             try:
                 if not deck.is_open():
@@ -178,8 +185,9 @@ class DeckManager:
 
     def on_connect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} connected")
-        # Check if it is a supported device
-        if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
+        # Check if it is a supported device (Elgato Stream Deck or MiraBox StreamDock)
+        vendor_id = device_info["ID_VENDOR_ID"]
+        if vendor_id != ELGATO_VENDOR_ID and vendor_id not in STREAMDOCK_VENDOR_ID_STRINGS:
             return
 
         GLib.idle_add(self.connect_new_decks)
@@ -190,7 +198,7 @@ class DeckManager:
         for controller in self.deck_controller:
             loaded_deck_ids.append(controller.deck.id())
 
-        for deck in DeviceManager().enumerate():
+        for deck in list(DeviceManager().enumerate()) + enumerate_stream_dock_decks():
             if deck.id() in loaded_deck_ids:
                 continue
             # Add deck
@@ -202,7 +210,8 @@ class DeckManager:
 
     def on_disconnect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} disconnected")
-        if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
+        vendor_id = device_info["ID_VENDOR_ID"]
+        if vendor_id != ELGATO_VENDOR_ID and vendor_id not in STREAMDOCK_VENDOR_ID_STRINGS:
             return
 
         for controller in list(self.deck_controller):

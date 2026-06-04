@@ -9,7 +9,7 @@ build-commands:
   --prefix=${FLATPAK_DEST} --no-build-isolation annotated-types async-lru bcrypt blinker
   cairocffi CairoSVG certifi cffi charset-normalizer click cloudpickle colorama contourpy
   cssselect2 cycler dasbus dbus-python decorator defusedxml distlib dnspython evdev
-  filelock fonttools fuzzywuzzy get-video-properties gitdb h2 hpack hyperframe idna
+  filelock fonttools fuzzywuzzy get-video-properties gitdb h2 hidapi hpack hyperframe idna
   imageio imageio-ffmpeg indexed-bzip2 itsdangerous Jinja2 joblib kiwisolver Levenshtein
   linkify-it-py loguru markdown-it-py MarkupSafe matplotlib mdit-py-plugins mdurl
   memray meson meson-python natsort nltk numpy opencv-python packaging patchelf pillow
@@ -22,6 +22,16 @@ build-commands:
   typing-extensions uc-micro-py urllib3 usb-monitor virtualenv webencodings websocket-client
   Werkzeug
 sources:
+- type: file
+  url: https://files.pythonhosted.org/packages/de/bc/0eb92f4f238adc8edc3decb859662cf87e302b0a6ecdabe0e4d0560eb5fd/hidapi-0.15.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+  sha256: cfdbc74d5c4b5fdeef58a246d80f7dbf4ca33fe741c889505a4a350dd2eb54fb
+  only-arches:
+  - x86_64
+- type: file
+  url: https://files.pythonhosted.org/packages/03/04/856827cfecaa89091ed470f697e3f9cfb172fc852960e6b902e765d7d650/hidapi-0.15.0-cp312-cp312-manylinux_2_28_aarch64.whl
+  sha256: 4b7b6207c1c7df3524e9d4019c7196547327636e9924010b9b0bf0c40029e329
+  only-arches:
+  - aarch64
 - type: file
   url: https://files.pythonhosted.org/packages/01/a5/1866b42151f50453f1a0d28fc4c39f5be5f412a2e914f33449c42daafdf1/CairoSVG-2.7.1-py3-none-any.whl
   sha256: 8a5222d4e6c3f86f1f7046b63246877a63b49923a1cd202184c3a634ef546b3b

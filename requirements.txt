@@ -26,6 +26,7 @@ fuzzywuzzy==0.18.0
 get-video-properties==0.1.1
 gitdb==4.0.12
 h2==4.2.0
+hidapi==0.15.0
 hpack==4.1.0
 hyperframe==6.1.0
 idna==3.10
