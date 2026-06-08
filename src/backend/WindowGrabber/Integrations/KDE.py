@@ -169,7 +169,10 @@ class WatchForActiveWindowChange(threading.Thread):
 
     @log.catch
     def run(self) -> None:
-        while gl.threads_running:
+        # self.kde.running is cleared by Integration.stop() when this KDE
+        # integration is replaced, so a re-init doesn't leave this thread
+        # polling kdotool forever (the cause of the watcher-thread pile-up).
+        while gl.threads_running and self.kde.running:
             time.sleep(0.2)
             window_id = self.kde.get_active_window_id()
             if window_id is None:

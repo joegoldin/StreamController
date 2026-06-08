@@ -63,6 +63,13 @@ class WindowGrabber:
             log.error(f"Unsupported environment: {self.environment} with server: {self.server} for window grabber.")
             return
 
+        # Tear down a previously created integration first; otherwise its
+        # active-window watcher thread keeps running and polling forever,
+        # leaking a thread (and, on KDE, a steady stream of kdotool/KWin D-Bus
+        # calls) on every re-init.
+        if self.integration is not None:
+            self.integration.stop()
+
         log.info(f"Initializing window grabber for environment: {self.environment} under server: {self.server}")
         if self.environment == "hyprland":
             self.integration = Hyprland(self)

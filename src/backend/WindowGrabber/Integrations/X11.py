@@ -184,7 +184,10 @@ class WatchForActiveWindowChange(threading.Thread):
 
     @log.catch
     def run(self) -> None:
-        while gl.threads_running:
+        # self.x11.running is cleared by Integration.stop() when this
+        # integration is replaced, so a re-init doesn't leave this thread
+        # polling forever (the watcher-thread leak).
+        while gl.threads_running and self.x11.running:
             time.sleep(0.2)
             new_active_window = self.x11.get_active_window()
             if new_active_window is None:
