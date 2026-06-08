@@ -145,14 +145,16 @@ class WatchForActiveWindowChange(threading.Thread):
         """Event-driven: listen on Hyprland's socket2 for activewindow>> events."""
         import time
 
-        while gl.threads_running:
+        # Honour Integration.stop() (see _run_polling) so a replaced
+        # integration also stops its socket listener.
+        while gl.threads_running and self.hyprland.running:
             try:
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.settimeout(5.0)
                 sock.connect(socket_path)
 
                 buffer = ""
-                while gl.threads_running:
+                while gl.threads_running and self.hyprland.running:
                     try:
                         data = sock.recv(4096)
                     except socket.timeout:
@@ -188,7 +190,10 @@ class WatchForActiveWindowChange(threading.Thread):
         import time
 
         last_active_window = self.hyprland.get_active_window()
-        while gl.threads_running:
+        # self.hyprland.running is cleared by Integration.stop() when this
+        # integration is replaced, so a re-init doesn't leave this thread
+        # polling forever (the watcher-thread leak).
+        while gl.threads_running and self.hyprland.running:
             time.sleep(0.2)
             new_active_window = self.hyprland.get_active_window()
             if new_active_window is None:
