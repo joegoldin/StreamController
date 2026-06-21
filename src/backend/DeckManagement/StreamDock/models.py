@@ -39,6 +39,10 @@ class StreamDockModel:
     # Dial indices that are physically larger than the rest (UI hint so the deck
     # view can render them bigger). Empty means all dials are the same size.
     large_dials: tuple = ()
+    # Grid indices that are screenless physical buttons (input-only, no display);
+    # the UI renders these as small circles with no label/icon editing. Empty
+    # means every key has an LCD screen.
+    screenless_keys: tuple = ()
 
     @property
     def key_count(self) -> int:
@@ -110,6 +114,9 @@ MODELS = {
         swipe_map={},
         # The top knob (dial index 2) is physically larger than the lower two.
         large_dials=(2,),
+        # Grid 6-8 are the 3 screenless "black" buttons along the bottom row
+        # (hardware codes 0x25/0x30/0x31): physical buttons with no LCD screen.
+        screenless_keys=(6, 7, 8),
     ),
     "StreamDockN4": StreamDockModel(
         key="StreamDockN4", name="StreamDock N4", rows=2, cols=5, dials=0,

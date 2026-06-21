@@ -113,6 +113,20 @@ class BetterDeck():
                 return set()
         return set()
 
+    def screenless_key_indices(self):
+        """Grid indices of keys with no display (input-only physical buttons).
+
+        Forwarded from the wrapped deck when provided (e.g. the StreamDock N3's
+        bottom-row buttons); decks without the hint report no screenless keys.
+        """
+        getter = getattr(self.deck, "screenless_key_indices", None)
+        if callable(getter):
+            try:
+                return set(getter())
+            except Exception:
+                return set()
+        return set()
+
     def deck_type(self):
         """
         Retrieves the model of Stream Deck.

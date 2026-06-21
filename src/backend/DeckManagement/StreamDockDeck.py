@@ -187,6 +187,10 @@ class StreamDockDeck:
         """Dial indices that are physically larger than the rest (UI sizing hint)."""
         return set(getattr(self.model, "large_dials", ()) or ())
 
+    def screenless_key_indices(self) -> set:
+        """Grid indices of keys with no image screen (input-only buttons)."""
+        return set(getattr(self.model, "screenless_keys", ()) or ())
+
     def touch_key_count(self) -> int:
         return 0
 
