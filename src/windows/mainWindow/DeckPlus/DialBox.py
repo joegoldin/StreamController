@@ -70,7 +70,7 @@ class DialBox(Gtk.Box):
         if large_indices:
             self.set_homogeneous(False)
         for i in range(deck.dial_count()):
-            dial = Dial(self, Input.Dial(str(i)), large=(i in large_indices))
+            dial = Dial(self, Input.Dial(str(i)), large=(deck.get_physical_dial_index(i) in large_indices))
             self.dials.append(dial)
             self.append(dial)
 
