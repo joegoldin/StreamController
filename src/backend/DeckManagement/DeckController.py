@@ -2108,11 +2108,26 @@ class ControllerKey(ControllerInput):
 
         # Handle transparency properly - composite RGBA onto RGB to preserve smooth edges
         if image.mode == "RGBA":
-            rgb_background = Image.new("RGB", image.size, (0, 0, 0))
-            rgb_background.paste(image, (0, 0), image)
-            rgb_image = rgb_background.rotate(self.deck_controller.deck.get_rotation())
+            rgb_image = Image.new("RGB", image.size, (0, 0, 0))
+            rgb_image.paste(image, (0, 0), image)
         else:
-            rgb_image = image.convert("RGB").rotate(self.deck_controller.deck.get_rotation())
+            rgb_image = image.convert("RGB")
+
+        # Apply the deck's display rotation. For 90° multiples use an exact
+        # transpose rather than Image.rotate(): rotate() spins around the float
+        # center (w/2, h/2), which on an even-sized key (e.g. a StreamDock 64x64
+        # tile) sits half a pixel off the true centre and biases the content
+        # toward a corner -- leaving more margin on the right/top. transpose() is
+        # exact and lossless; for rotation 0 (Elgato) this is a no-op.
+        rotation = self.deck_controller.deck.get_rotation() % 360
+        if rotation == 90:
+            rgb_image = rgb_image.transpose(Image.Transpose.ROTATE_90)
+        elif rotation == 180:
+            rgb_image = rgb_image.transpose(Image.Transpose.ROTATE_180)
+        elif rotation == 270:
+            rgb_image = rgb_image.transpose(Image.Transpose.ROTATE_270)
+        elif rotation:
+            rgb_image = rgb_image.rotate(rotation)
 
         if self.deck_controller.is_visual():
             native_image = PILHelper.to_native_key_format(self.deck_controller.deck, rgb_image)

@@ -379,6 +379,11 @@
   background-color: #363636;
   border-radius: 50px;
 }
+.dial-large {
+  min-width: 105px;
+  min-height: 105px;
+  border-radius: 99999px;
+}
 .dial-frame {
   border-radius:99999px;
   border-width: 3px;

@@ -36,6 +36,9 @@ class StreamDockModel:
     knob_rotate_map: dict = field(default_factory=dict)
     knob_press_map: dict = field(default_factory=dict)
     swipe_map: dict = field(default_factory=dict)
+    # Dial indices that are physically larger than the rest (UI hint so the deck
+    # view can render them bigger). Empty means all dials are the same size.
+    large_dials: tuple = ()
 
     @property
     def key_count(self) -> int:
@@ -93,14 +96,20 @@ MODELS = {
         swipe_map={},
     ),
     "StreamDockN3": StreamDockModel(
-        key="StreamDockN3", name="StreamDock N3", rows=2, cols=3, dials=3,
+        key="StreamDockN3", name="StreamDock N3", rows=3, cols=3, dials=3,
         key_image_size=(64, 64), key_image_rotation=-90, key_image_flip=(False, False),
         report_input=513, report_output=1025, report_feature=0, report_id=0, code_offset=9,
         image_key_map={0x00: 1, 0x01: 2, 0x02: 3, 0x03: 4, 0x04: 5, 0x05: 6},
-        button_map={0x01: 0, 0x02: 1, 0x03: 2, 0x04: 3, 0x05: 4, 0x06: 5},
+        # 6 LCD keys (grid 0-5) + 3 screenless "black" buttons along the bottom
+        # (grid 6-8, hardware codes 0x25/0x30/0x31). The bottom row has no image
+        # screens, so they are absent from image_key_map (device.py no-ops images
+        # for keys without a mapping); they are input-only.
+        button_map={0x01: 0, 0x02: 1, 0x03: 2, 0x04: 3, 0x05: 4, 0x06: 5, 0x25: 6, 0x30: 7, 0x31: 8},
         knob_rotate_map={0x50: (2, -1), 0x51: (2, 1), 0x60: (1, -1), 0x61: (1, 1), 0x90: (0, -1), 0x91: (0, 1)},
         knob_press_map={0x33: 0, 0x34: 1, 0x35: 2},
         swipe_map={},
+        # The top knob (dial index 2) is physically larger than the lower two.
+        large_dials=(2,),
     ),
     "StreamDockN4": StreamDockModel(
         key="StreamDockN4", name="StreamDock N4", rows=2, cols=5, dials=0,
