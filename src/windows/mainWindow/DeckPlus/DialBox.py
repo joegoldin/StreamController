@@ -77,6 +77,10 @@ class Dial(Gtk.Frame):
         self.identifier = identifier
         self.large = large
         self.set_halign(Gtk.Align.CENTER)
+        # Centre vertically rather than fill: when the row contains a taller
+        # (large) dial, FILL would stretch the smaller dials to the row height
+        # and turn them into ovals. Centring keeps every dial square (circular).
+        self.set_valign(Gtk.Align.CENTER)
         self.set_css_classes(["dial-frame", "dial-frame-hidden"])
         self.set_overflow(Gtk.Overflow.HIDDEN)
 
