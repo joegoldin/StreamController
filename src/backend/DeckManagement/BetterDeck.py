@@ -99,6 +99,20 @@ class BetterDeck():
         """
         return self.deck.dial_count()
 
+    def large_dial_indices(self):
+        """Dial indices that are physically larger than the rest (UI sizing hint).
+
+        Forwarded from the wrapped deck when it provides the hint (e.g. the
+        StreamDock N3's top knob); decks without it report no large dials.
+        """
+        getter = getattr(self.deck, "large_dial_indices", None)
+        if callable(getter):
+            try:
+                return set(getter())
+            except Exception:
+                return set()
+        return set()
+
     def deck_type(self):
         """
         Retrieves the model of Stream Deck.
