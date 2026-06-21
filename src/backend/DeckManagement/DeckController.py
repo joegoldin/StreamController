@@ -3184,9 +3184,18 @@ class ControllerKey(ControllerInput):
             if image.mode == "RGBA":
                 rgb_background = Image.new("RGB", image.size, (0, 0, 0))
                 rgb_background.paste(image, (0, 0), image)
-                rgb_image = rgb_background.rotate(self.deck_controller.deck.get_rotation())
+                rgb_image = rgb_background
             else:
-                rgb_image = image.convert("RGB").rotate(self.deck_controller.deck.get_rotation())
+                rgb_image = image.convert("RGB")
+
+            # Exact quarter turns preserve centering on even-sized StreamDock tiles.
+            rotation = self.deck_controller.deck.get_rotation() % 360
+            transpose = {90: Image.Transpose.ROTATE_90, 180: Image.Transpose.ROTATE_180,
+                         270: Image.Transpose.ROTATE_270}.get(rotation)
+            if rotation:
+                rotated = rgb_image.transpose(transpose) if transpose is not None else rgb_image.rotate(rotation)
+                rgb_image.close()
+                rgb_image = rotated
 
             if self.deck_controller.is_visual():
                 native_image = PILHelper.to_native_key_format(self.deck_controller.deck, rgb_image)

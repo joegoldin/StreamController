@@ -183,6 +183,10 @@ class StreamDockDeck:
     def dial_count(self) -> int:
         return self.model.dials
 
+    def large_dial_indices(self) -> set:
+        """Dial indices that are physically larger than the rest (UI sizing hint)."""
+        return set(getattr(self.model, "large_dials", ()) or ())
+
     def touch_key_count(self) -> int:
         return 0
 
