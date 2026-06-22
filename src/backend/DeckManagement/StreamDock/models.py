@@ -43,6 +43,22 @@ class StreamDockModel:
     # the UI renders these as small circles with no label/icon editing. Empty
     # means every key has an LCD screen.
     screenless_keys: tuple = ()
+    # Per-key image framing (for single-screen panels whose bezel cutout shows an
+    # off-centre slice of each tiled cell, e.g. the N3). When cell_size is set,
+    # device.py pastes the rendered key image (key_image_size) into a cell_size
+    # canvas at a per-(col,row) offset, then rotates by cell_rotation, before
+    # sending -- so each icon lands centred in its lit cutout. Empty = send as-is.
+    cell_size: tuple = ()
+    cell_rotation: int = 0          # degrees, applied by the adapter (PIL transpose)
+    col_x_offsets: tuple = ()       # x offset of content within the cell, per column
+    row_y_offsets: tuple = ()       # y offset of content within the cell, per row
+    # If set, the rendered key image is scaled to this size and centred in the
+    # cell (giving margin around the icon). Empty = use the image as rendered.
+    icon_size: tuple = ()
+    # Black-fill size painted over every LCD key on connect to wipe old/factory
+    # content (incl. the gaps around the cutouts) -- CLE doesn't visibly clear
+    # some panels. Larger than cell_size to cover between cutouts. Empty = skip.
+    screen_clear_size: tuple = ()
 
     @property
     def key_count(self) -> int:
@@ -101,7 +117,12 @@ MODELS = {
     ),
     "StreamDockN3": StreamDockModel(
         key="StreamDockN3", name="StreamDock N3", rows=3, cols=3, dials=3,
-        key_image_size=(64, 64), key_image_rotation=-90, key_image_flip=(False, False),
+        # Single 320x240 screen behind a bezel with square cutouts. The device
+        # tiles key images at an 85px pitch and the bezel shows a per-key off-set
+        # slice, so SC renders the icon upright at 85x85 (no rotation here) and
+        # device.py frames it into an 85x85 cell at a tuned per-(col,row) offset,
+        # then rotates 270 -- landing each icon centred in its lit cutout.
+        key_image_size=(85, 85), key_image_rotation=0, key_image_flip=(False, False),
         report_input=513, report_output=1025, report_feature=0, report_id=0, code_offset=9,
         image_key_map={0x00: 1, 0x01: 2, 0x02: 3, 0x03: 4, 0x04: 5, 0x05: 6},
         # 6 LCD keys (grid 0-5) + 3 screenless "black" buttons along the bottom
@@ -117,6 +138,18 @@ MODELS = {
         # Grid 6-8 are the 3 screenless "black" buttons along the bottom row
         # (hardware codes 0x25/0x30/0x31): physical buttons with no LCD screen.
         screenless_keys=(6, 7, 8),
+        # Per-key framing tuned on-device: 85x85 cell, rotate 270, content shifted
+        # x per column (left/middle/right) and y per row (top/bottom).
+        cell_size=(85, 85),
+        cell_rotation=270,
+        col_x_offsets=(-6, -6, -1),
+        row_y_offsets=(2, 8),
+        # Scale the rendered icon and centre it (margin around it) in the ~85px
+        # lit cutout; 72 leaves ~6-7px visible margin.
+        icon_size=(72, 72),
+        # Wipe the whole panel black on connect (CLE doesn't visibly clear it);
+        # 112 per key covers the cutouts and the gaps between them.
+        screen_clear_size=(112, 112),
     ),
     "StreamDockN4": StreamDockModel(
         key="StreamDockN4", name="StreamDock N4", rows=2, cols=5, dials=0,
