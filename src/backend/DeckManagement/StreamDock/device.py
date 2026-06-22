@@ -98,10 +98,14 @@ class StreamDockDevice:
                     t.join(timeout=1.0)
                 except RuntimeError:
                     pass
-        try:
-            self.hid.notify_disconnected()
-        except Exception:
-            pass
+        # NOTE: deliberately do NOT send notify_disconnected ("CLE..DC") here.
+        # On the N3 (and likely the rest of the family) that command latches the
+        # panel into a "host disconnected" state in which it ignores ALL display
+        # writes until a physical USB replug -- input reports still come through.
+        # That made StreamController restarts look half-dead: the deck responded
+        # to button/dial presses but never redrew (and key changes did nothing).
+        # Just releasing the HID handle leaves the panel writable, so the next
+        # open() re-initialises and redraws normally.
         self.hid.close()
 
     @property
