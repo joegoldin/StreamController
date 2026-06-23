@@ -42,6 +42,9 @@ class StreamDockDevice:
     """A single attached StreamDock, addressed by its model's data tables."""
 
     HEARTBEAT_INTERVAL = 10.0  # seconds
+    # Unaccounted wall time (the CLOCK_BOOTTIME-minus-CLOCK_MONOTONIC jump) above
+    # which we assume the machine suspended and the panel needs re-initialising.
+    RESUME_GAP_THRESHOLD = 5.0  # seconds
 
     def __init__(self, path, vendor_id: int, product_id: int, serial_number: str, model: StreamDockModel):
         self.path = path
@@ -60,6 +63,11 @@ class StreamDockDevice:
         self._disconnected = False
         self._read_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
+
+        # Last JPEG sent per hardware key + last brightness, so the panel can be
+        # repainted after resume-from-suspend without a controller re-render.
+        self._last_images: dict = {}
+        self._last_brightness: int = 100
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -133,6 +141,7 @@ class StreamDockDevice:
             return
         if getattr(self.model, "cell_size", ()):
             jpeg_bytes = self._frame_key_image(grid_index, jpeg_bytes)
+        self._last_images[hw] = jpeg_bytes
         self.hid.set_key_image(jpeg_bytes, hw)
 
     @staticmethod
@@ -173,16 +182,57 @@ class StreamDockDevice:
     def clear_key(self, grid_index: int):
         hw = self.model.image_key_map.get(grid_index)
         if hw is not None:
+            self._last_images.pop(hw, None)
             self.hid.clear_key(hw)
 
     def clear_all(self):
+        self._last_images.clear()
         self.hid.clear_all_keys()
 
     def set_brightness(self, percent: int):
+        self._last_brightness = percent
         self.hid.set_key_brightness(percent)
 
     def refresh(self):
         self.hid.refresh_screen()
+
+    def reinit_panel(self):
+        """Re-run the panel's display init and re-push the last drawn images.
+
+        After resume-from-suspend the HID handle survives (input keeps working)
+        but the panel stops displaying updates until it is re-woken -- only this
+        (or a physical replug) brings it back. Mirrors the display half of
+        :meth:`open` and then repaints every key we've drawn, all on the existing
+        handle so no reconnect/UI churn is needed.
+        """
+        m = self.model
+        try:
+            self.hid.wakeup_screen()
+            self.hid.set_key_brightness(self._last_brightness)
+            self.hid.clear_all_keys()
+            fill = getattr(m, "screen_clear_size", ())
+            if fill:
+                blk = self._black_jpeg(fill)
+                for hw in sorted(set(m.image_key_map.values())):
+                    self.hid.set_key_image(blk, hw)
+            for hw, jpeg in list(self._last_images.items()):
+                self.hid.set_key_image(jpeg, hw)
+            self.hid.refresh_screen()
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} panel re-init failed: {e}")
+
+    @staticmethod
+    def _suspend_offset() -> float:
+        """CLOCK_BOOTTIME minus CLOCK_MONOTONIC: jumps by the time spent suspended.
+
+        BOOTTIME counts time the machine was asleep; MONOTONIC does not, so a jump
+        in their difference is a reliable, NTP-immune signal that we resumed from
+        suspend. Returns 0.0 where the clocks aren't available (non-Linux).
+        """
+        try:
+            return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+        except (AttributeError, OSError):
+            return 0.0
 
     # ------------------------------------------------------------------ #
     # Input
@@ -246,16 +296,26 @@ class StreamDockDevice:
 
     def _heartbeat_loop(self):
         time.sleep(1.0)  # let the reader settle first
+        last_offset = self._suspend_offset()
         while self._run:
             try:
                 self.hid.heartbeat()
             except Exception as e:
                 log.error(f"StreamDock heartbeat error: {e}")
-            # Sleep in small slices so close() stays responsive.
+            # Sleep in small slices so close() stays responsive, and watch for a
+            # resume-from-suspend each slice so the panel is repainted promptly.
             waited = 0.0
             while self._run and waited < self.HEARTBEAT_INTERVAL:
                 time.sleep(0.1)
                 waited += 0.1
+                offset = self._suspend_offset()
+                if offset - last_offset > self.RESUME_GAP_THRESHOLD:
+                    log.info(
+                        f"StreamDock {self.serial_number}: resume from suspend "
+                        f"detected (~{offset - last_offset:.0f}s); re-initialising panel"
+                    )
+                    self.reinit_panel()
+                last_offset = offset
 
 
 def enumerate_stream_dock_devices() -> List[StreamDockDevice]:
