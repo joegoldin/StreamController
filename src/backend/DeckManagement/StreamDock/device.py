@@ -77,18 +77,10 @@ class StreamDockDevice:
             return False
         m = self.model
         self.hid.set_report_config(m.report_input, m.report_output, m.report_feature, m.report_id)
-        self.hid.wakeup_screen()
-        self.hid.set_key_brightness(100)  # sane default; StreamController sets the real value
-        self.hid.clear_all_keys()
-        # Full-screen black clear: CLE doesn't visibly wipe some panels, so paint
-        # a black fill over every LCD key (covering the gaps around the cutouts)
-        # to remove any old/factory content before StreamController draws.
-        fill = getattr(m, "screen_clear_size", ())
-        if fill:
-            blk = self._black_jpeg(fill)
-            for hw in sorted(set(m.image_key_map.values())):
-                self.hid.set_key_image(blk, hw)
-        self.hid.refresh_screen()
+        # Run the same display init used on resume, so launching also un-freezes a
+        # panel left stuck by a prior suspend. (No images are cached yet on a fresh
+        # open, so this just wakes + clears the panel before StreamController draws.)
+        self._init_display()
         self.firmware_version = self.hid.get_firmware_version()
 
         self._run = True
@@ -196,28 +188,38 @@ class StreamDockDevice:
     def refresh(self):
         self.hid.refresh_screen()
 
+    def _init_display(self):
+        """Wake the panel, clear it black, and (re)push every cached key image.
+
+        Shared by :meth:`open` (fresh launch -- no cached images yet, so it just
+        wakes and clears the panel) and :meth:`reinit_panel` (resume-from-suspend
+        -- repaints the keys we'd drawn). The full-screen black fill paints over
+        every LCD key (covering the gaps around the bezel cutouts) so no old or
+        factory content shows through; CLE alone doesn't visibly wipe some panels.
+        """
+        m = self.model
+        self.hid.wakeup_screen()
+        self.hid.set_key_brightness(self._last_brightness)
+        self.hid.clear_all_keys()
+        fill = getattr(m, "screen_clear_size", ())
+        if fill:
+            blk = self._black_jpeg(fill)
+            for hw in sorted(set(m.image_key_map.values())):
+                self.hid.set_key_image(blk, hw)
+        for hw, jpeg in list(self._last_images.items()):
+            self.hid.set_key_image(jpeg, hw)
+        self.hid.refresh_screen()
+
     def reinit_panel(self):
         """Re-run the panel's display init and re-push the last drawn images.
 
         After resume-from-suspend the HID handle survives (input keeps working)
         but the panel stops displaying updates until it is re-woken -- only this
-        (or a physical replug) brings it back. Mirrors the display half of
-        :meth:`open` and then repaints every key we've drawn, all on the existing
-        handle so no reconnect/UI churn is needed.
+        (or a physical replug) brings it back. Runs on the existing handle, so no
+        reconnect/UI churn is needed.
         """
-        m = self.model
         try:
-            self.hid.wakeup_screen()
-            self.hid.set_key_brightness(self._last_brightness)
-            self.hid.clear_all_keys()
-            fill = getattr(m, "screen_clear_size", ())
-            if fill:
-                blk = self._black_jpeg(fill)
-                for hw in sorted(set(m.image_key_map.values())):
-                    self.hid.set_key_image(blk, hw)
-            for hw, jpeg in list(self._last_images.items()):
-                self.hid.set_key_image(jpeg, hw)
-            self.hid.refresh_screen()
+            self._init_display()
         except Exception as e:
             log.error(f"StreamDock {self.serial_number} panel re-init failed: {e}")
 
