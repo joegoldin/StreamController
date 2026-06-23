@@ -65,3 +65,15 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1014", TAG+="uacce
 SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1015", TAG+="uaccess"
 # StreamDock K1 Pro
 SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1019", TAG+="uaccess"
+
+# Keep StreamDock panels recoverable across a host sleep. On buses that hold VBUS
+# through suspend the device never disconnects; its display controller can wedge,
+# and the kernel silently restores the frozen device on resume. persist=0 makes
+# the kernel re-establish (re-enumerate) the device on resume instead, so it comes
+# back clean. Matched per MiraBox vendor id (all their products are StreamDocks)
+# and scoped to the usb_device so power/persist isn't written on USB interfaces.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5548", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6602", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6603", ATTR{power/persist}="0"
