@@ -127,6 +127,18 @@ class BetterDeck():
                 return set()
         return set()
 
+    def reinit_panel(self):
+        """Force-re-wake and repaint the panel, for decks that can wedge their
+        display while blanked (e.g. the StreamDock single-screen panel after a
+        screen-lock blanks it). Forwarded to the wrapped deck when it supports
+        it; a no-op for decks (Elgato/Fake) that don't need it."""
+        fn = getattr(self.deck, "reinit_panel", None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+
     def deck_type(self):
         """
         Retrieves the model of Stream Deck.

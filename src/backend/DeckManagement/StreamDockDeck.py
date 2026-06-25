@@ -254,6 +254,15 @@ class StreamDockDeck:
         except Exception as e:
             log.error(f"StreamDock reset failed: {e}")
 
+    def reinit_panel(self) -> None:
+        """Re-wake and repaint the single-screen panel (re-pushes the last drawn
+        images). Used to recover after a screen-lock blanks the deck, which can
+        leave the panel ignoring plain redraws until it's woken again."""
+        try:
+            self.device.reinit_panel()
+        except Exception as e:
+            log.error(f"StreamDock reinit_panel failed: {e}")
+
     def set_poll_frequency(self, hz) -> None:
         # The device owns its own reader thread; nothing to configure here.
         return
