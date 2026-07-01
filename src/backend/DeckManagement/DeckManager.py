@@ -85,6 +85,16 @@ class DeckManager:
         if not self.beta_resume_mode:
             resume_thread.start()
 
+        # A deck that re-enumerates on resume from suspend is missed by usbmonitor
+        # -- it doesn't receive the udev connect/disconnect uevents fired during
+        # the suspend/resume transition -- so on_connect never runs and the deck
+        # would sit dead (this bites StreamDock panels with power/persist=0, which
+        # re-enumerate on resume). Reconnect them explicitly on a boottime-detected
+        # resume. Runs regardless of beta_resume_mode; it only touches decks that
+        # report disconnected, so live decks are untouched.
+        self.stream_dock_resume_thread = StreamDockResumeThread(self)
+        self.stream_dock_resume_thread.start()
+
         self.remote_deck_manager = RemoteDeckManager(self)
         if gl.settings_manager.get_app_settings().get("dev", {}).get("n-remote-decks", 0) > 0:
             self.load_remote_decks()
@@ -339,6 +349,35 @@ class DeckManager:
     def get_connected_serials(self) -> list[str]:
         return [controller.serial_number() for controller in self.deck_controller]
 
+    def reconnect_disconnected_decks(self):
+        """Drop any deck that reports disconnected and re-enumerate to re-add it.
+
+        Called on resume from suspend to run the reconnect that usbmonitor missed
+        (it doesn't see the uevents fired during the suspend/resume transition).
+        Live decks report ``connected() == True`` and are left alone; a deck that
+        re-enumerated on resume (e.g. a StreamDock with power/persist=0) reports
+        disconnected, so it's closed, removed, and re-added fresh by
+        ``connect_new_decks`` -- the same path a physical replug takes, which is
+        what reliably brings the panel back.
+        """
+        for controller in list(self.deck_controller):
+            try:
+                if controller.deck.connected():
+                    continue
+                log.info(f"Resume: reconnecting disconnected deck {controller.serial_number()}")
+                try:
+                    controller.deck.close()
+                except Exception:
+                    pass
+                controller.media_player.running = False
+                self.remove_controller(controller)
+            except Exception as e:
+                log.error(f"Resume reconcile error: {e}")
+        self.connect_new_decks()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
+        return False  # one-shot for GLib.idle_add
+
 
 class FlatpakDeckDisconnectThread(threading.Thread):
     def __init__(self, deck_manager: DeckManager):
@@ -370,5 +409,42 @@ class DetectResumeThread(threading.Thread):
             self.last_2 = time.time()
             if time.time() - self.last_1 >= 5 or time.time() - self.last_2 >= 5:
                 self.deck_manager.on_resumed()
-            
+
             time.sleep(2)
+
+
+class StreamDockResumeThread(threading.Thread):
+    """Reconnect decks after resume from suspend.
+
+    usbmonitor does not receive the udev connect/disconnect events fired during
+    the suspend/resume transition, so a deck that re-enumerates on resume (e.g. a
+    StreamDock with power/persist=0) never gets on_connect and would sit dead.
+    Detect resume by watching the CLOCK_BOOTTIME/CLOCK_MONOTONIC gap -- boottime
+    counts time spent suspended, monotonic does not, so a jump means we slept
+    (NTP-immune) -- then re-run the reconnect usbmonitor missed.
+    """
+
+    RESUME_GAP = 5.0  # seconds of unaccounted wall time => a suspend happened
+
+    def __init__(self, deck_manager: DeckManager):
+        super().__init__(name="StreamDockResumeThread", daemon=True)
+        self.deck_manager = deck_manager
+
+    @staticmethod
+    def _suspend_offset() -> float:
+        try:
+            return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+        except (AttributeError, OSError):
+            return 0.0
+
+    def run(self):
+        last = self._suspend_offset()
+        while gl.threads_running:
+            time.sleep(2)
+            offset = self._suspend_offset()
+            if offset - last > self.RESUME_GAP:
+                log.info(f"Resume from suspend detected (~{offset - last:.0f}s); reconnecting decks")
+                time.sleep(2)  # let the kernel finish re-enumerating USB
+                GLib.idle_add(self.deck_manager.reconnect_disconnected_decks)
+                offset = self._suspend_offset()  # account for the settle sleep
+            last = offset

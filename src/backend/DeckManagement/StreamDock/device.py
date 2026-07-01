@@ -42,9 +42,6 @@ class StreamDockDevice:
     """A single attached StreamDock, addressed by its model's data tables."""
 
     HEARTBEAT_INTERVAL = 10.0  # seconds
-    # Unaccounted wall time (the CLOCK_BOOTTIME-minus-CLOCK_MONOTONIC jump) above
-    # which we assume the machine suspended and the panel needs re-initialising.
-    RESUME_GAP_THRESHOLD = 5.0  # seconds
 
     def __init__(self, path, vendor_id: int, product_id: int, serial_number: str, model: StreamDockModel):
         self.path = path
@@ -211,30 +208,19 @@ class StreamDockDevice:
         self.hid.refresh_screen()
 
     def reinit_panel(self):
-        """Re-run the panel's display init and re-push the last drawn images.
+        """Re-run the panel's display init and re-push the last drawn images on
+        the existing handle.
 
-        After resume-from-suspend the HID handle survives (input keeps working)
-        but the panel stops displaying updates until it is re-woken -- only this
-        (or a physical replug) brings it back. Runs on the existing handle, so no
-        reconnect/UI churn is needed.
+        Used to recover the panel after the lock-screen saver blanks it (see
+        ``ScreenSaver.hide``): the single-screen panel ignores plain redraws until
+        it's re-woken. Resume-from-suspend is handled separately by a full
+        reconnect in ``DeckManager`` (the handle re-enumerates on resume), so this
+        is the awake, same-handle path only.
         """
         try:
             self._init_display()
         except Exception as e:
             log.error(f"StreamDock {self.serial_number} panel re-init failed: {e}")
-
-    @staticmethod
-    def _suspend_offset() -> float:
-        """CLOCK_BOOTTIME minus CLOCK_MONOTONIC: jumps by the time spent suspended.
-
-        BOOTTIME counts time the machine was asleep; MONOTONIC does not, so a jump
-        in their difference is a reliable, NTP-immune signal that we resumed from
-        suspend. Returns 0.0 where the clocks aren't available (non-Linux).
-        """
-        try:
-            return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
-        except (AttributeError, OSError):
-            return 0.0
 
     # ------------------------------------------------------------------ #
     # Input
@@ -298,26 +284,16 @@ class StreamDockDevice:
 
     def _heartbeat_loop(self):
         time.sleep(1.0)  # let the reader settle first
-        last_offset = self._suspend_offset()
         while self._run:
             try:
                 self.hid.heartbeat()
             except Exception as e:
                 log.error(f"StreamDock heartbeat error: {e}")
-            # Sleep in small slices so close() stays responsive, and watch for a
-            # resume-from-suspend each slice so the panel is repainted promptly.
+            # Sleep in small slices so close() stays responsive.
             waited = 0.0
             while self._run and waited < self.HEARTBEAT_INTERVAL:
                 time.sleep(0.1)
                 waited += 0.1
-                offset = self._suspend_offset()
-                if offset - last_offset > self.RESUME_GAP_THRESHOLD:
-                    log.info(
-                        f"StreamDock {self.serial_number}: resume from suspend "
-                        f"detected (~{offset - last_offset:.0f}s); re-initialising panel"
-                    )
-                    self.reinit_panel()
-                last_offset = offset
 
 
 def enumerate_stream_dock_devices() -> List[StreamDockDevice]:

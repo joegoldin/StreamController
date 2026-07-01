@@ -65,3 +65,16 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1014", TAG+="uacce
 SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1015", TAG+="uaccess"
 # StreamDock K1 Pro
 SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1019", TAG+="uaccess"
+
+# Force a clean re-enumeration of StreamDock panels on resume from suspend.
+# These panels wedge their display across a host sleep; re-enumerating (rather
+# than the kernel silently restoring the frozen device) is what reliably brings
+# the display back. StreamController pairs this with a boottime-based resume
+# reconnect (usbmonitor doesn't see the connect/disconnect uevents that fire
+# during the suspend/resume transition). Scoped to the usb_device per MiraBox
+# vendor id so power/persist isn't written on USB interfaces.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5548", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6602", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6603", ATTR{power/persist}="0"
