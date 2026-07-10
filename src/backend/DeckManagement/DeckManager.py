@@ -364,6 +364,19 @@ class DeckManager:
             try:
                 if controller.deck.connected():
                     continue
+                # Prefer reviving the deck in place: for StreamDocks,
+                # reinit_panel USB-resets the device, reopens it with the
+                # official handshake and repaints -- clearing the firmware's
+                # post-suspend "host gone" latch without any UI churn. The
+                # recovery runs in a background thread (~3s); if the deck is
+                # still dead afterwards (e.g. truly unplugged during suspend),
+                # fall back to the remove + re-enumerate path.
+                reinit = getattr(controller.deck, "reinit_panel", None)
+                if callable(reinit):
+                    log.info(f"Resume: hard-resetting deck {controller.serial_number()}")
+                    reinit()
+                    GLib.timeout_add_seconds(10, self._drop_if_still_disconnected, controller)
+                    continue
                 log.info(f"Resume: reconnecting disconnected deck {controller.serial_number()}")
                 try:
                     controller.deck.close()
@@ -377,6 +390,25 @@ class DeckManager:
         if recursive_hasattr(gl, "app.main_win"):
             GLib.idle_add(gl.app.main_win.check_for_errors)
         return False  # one-shot for GLib.idle_add
+
+    def _drop_if_still_disconnected(self, controller) -> bool:
+        """Post-reset fallback: if an in-place hard reset didn't revive the deck
+        (it was actually unplugged), remove it and re-enumerate."""
+        try:
+            if controller in self.deck_controller and not controller.deck.connected():
+                log.info(f"Deck {controller.serial_number()} still disconnected after reset; removing")
+                try:
+                    controller.deck.close()
+                except Exception:
+                    pass
+                controller.media_player.running = False
+                self.remove_controller(controller)
+                self.connect_new_decks()
+                if recursive_hasattr(gl, "app.main_win"):
+                    GLib.idle_add(gl.app.main_win.check_for_errors)
+        except Exception as e:
+            log.error(f"Post-reset reconcile error: {e}")
+        return False  # one-shot for GLib.timeout_add_seconds
 
 
 class FlatpakDeckDisconnectThread(threading.Thread):

@@ -69,6 +69,7 @@ class StreamDockDeck:
 
     def __init__(self, device):
         self.device = device
+        self._reinit_lock = threading.Lock()
         self.model = device.model
 
         self._path = device.path
@@ -255,13 +256,36 @@ class StreamDockDeck:
             log.error(f"StreamDock reset failed: {e}")
 
     def reinit_panel(self) -> None:
-        """Re-wake and repaint the single-screen panel (re-pushes the last drawn
-        images). Used to recover after a screen-lock blanks the deck, which can
-        leave the panel ignoring plain redraws until it's woken again."""
+        """Fully recover the panel: USB reset + reopen + official handshake +
+        repaint of the last drawn images. Clears the firmware's "host gone"
+        latch (frozen display, writes ACKed but ignored) that engages across a
+        host suspend or a lock-screen blank -- the software equivalent of a
+        physical replug.
+
+        Runs in a background thread (the reset + settle takes ~3s and callers
+        include the GTK main loop) and is single-flight: a re-entrant call
+        while a recovery is already running is dropped.
+        """
+        if self._reinit_lock.locked():
+            return
+
+        def _run():
+            with self._reinit_lock:
+                try:
+                    self.device.reinit_panel()
+                    self._mark_dirty()
+                except Exception as e:
+                    log.error(f"StreamDock reinit_panel failed: {e}")
+
+        threading.Thread(target=_run, name="StreamDockReinit", daemon=True).start()
+
+    def sleep_panel(self) -> None:
+        """Power the panel off (HAN) -- used while the host is locked. The next
+        reinit_panel()/open() turns it back on."""
         try:
-            self.device.reinit_panel()
+            self.device.sleep_panel()
         except Exception as e:
-            log.error(f"StreamDock reinit_panel failed: {e}")
+            log.error(f"StreamDock sleep_panel failed: {e}")
 
     def set_poll_frequency(self, hz) -> None:
         # The device owns its own reader thread; nothing to configure here.
