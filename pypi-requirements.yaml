@@ -23,13 +23,13 @@ build-commands:
   Werkzeug
 sources:
 - type: file
-  url: https://files.pythonhosted.org/packages/de/bc/0eb92f4f238adc8edc3decb859662cf87e302b0a6ecdabe0e4d0560eb5fd/hidapi-0.15.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
-  sha256: cfdbc74d5c4b5fdeef58a246d80f7dbf4ca33fe741c889505a4a350dd2eb54fb
+  url: https://files.pythonhosted.org/packages/f1/b0/f144cee5ce9e45518d234fd07c7a4f9a66de3a78ed42bf9f3f4083165e10/hidapi-0.15.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+  sha256: 208c7fc89f78c3448d55957c3e12893778aa91218ed7dc22697e554f091fe4fe
   only-arches:
   - x86_64
 - type: file
-  url: https://files.pythonhosted.org/packages/03/04/856827cfecaa89091ed470f697e3f9cfb172fc852960e6b902e765d7d650/hidapi-0.15.0-cp312-cp312-manylinux_2_28_aarch64.whl
-  sha256: 4b7b6207c1c7df3524e9d4019c7196547327636e9924010b9b0bf0c40029e329
+  url: https://files.pythonhosted.org/packages/47/bf/7fee015cc48b719bd40c6416f65084a900e7889f0cf52fcfedb9be107b10/hidapi-0.15.0-cp313-cp313-manylinux_2_28_aarch64.whl
+  sha256: 90f8bd963ae43a44036af5d689d090fab0e3eb52861186e4d2b863dd910a2726
   only-arches:
   - aarch64
 - type: file
