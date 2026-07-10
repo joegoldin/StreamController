@@ -10,6 +10,14 @@ was reverse engineered and contributed by Philip Huppert (GitHub: Phaeilo) in
 "Pure Python HID transport implementation":
 https://github.com/MiraboxSpace/StreamDock-Device-SDK/pull/76
 
+The MOD mode-select command and its place in the official connect handshake
+(MOD=software -> DIS -> LIG) -- the missing half of the "host gone" latch
+recovery -- plus the HAN-is-true-panel-off and CONNECT-keepalive semantics
+come from Steve Murr's independent reverse engineering
+(https://github.com/stevemurr/streamdock), corroborated by 4ndv's mirajazz
+(https://github.com/4ndv/mirajazz, byte-identical MOD frames on N-series
+hardware) and https://github.com/rigor789/mirabox-streamdock-node.
+
 Wire format: every command is an output report beginning with a 5-byte header
 (``b"CRT\\x00\\x00"`` by default) followed by a 3-letter ASCII command and
 optional big-endian parameters, zero-padded to the report size. Bulk payloads
