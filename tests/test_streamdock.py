@@ -51,6 +51,8 @@ class StubHID:
     def open(self, path): self.opened = True; return True
     def close(self): self.closed = True
     def set_report_config(self, i, o, f, r): self.report_cfg = (i, o, f, r)
+    def set_mode(self, mode): self.mode = mode
+    def sleep_screen(self): pass
     def wakeup_screen(self): pass
     def set_key_brightness(self, b): self.brightness = b
     def clear_all_keys(self): pass
@@ -96,8 +98,10 @@ def test_model_data_integrity():
     check(len(PRODUCTS) == 26, "26 (vid,pid) products mapped")
     for key, m in MODELS.items():
         check(m.key_count == m.rows * m.cols, f"{key}: key_count == rows*cols")
-        check(len(m.image_key_map) == m.key_count, f"{key}: image map covers every grid key")
-        check(set(m.image_key_map) == set(range(m.key_count)), f"{key}: image map keyed by grid index")
+        screenless = set(getattr(m, "screenless_keys", ()) or ())
+        with_screen = set(range(m.key_count)) - screenless
+        check(set(m.image_key_map) == with_screen,
+              f"{key}: image map covers exactly the keys with a display")
         check(all(0 <= gi < m.key_count for gi in m.button_map.values()), f"{key}: button_map -> valid grid index")
         dials_used = {d for d, _ in m.knob_rotate_map.values()} | set(m.knob_press_map.values())
         check(all(0 <= d < m.dials for d in dials_used), f"{key}: knob maps -> valid dial index")
@@ -180,7 +184,7 @@ def test_layouts():
     specs = {
         "StreamDock293V3": (15, (3, 5), 0),
         "StreamDockXL": (32, (4, 8), 2),
-        "StreamDockN3": (6, (2, 3), 3),
+        "StreamDockN3": (9, (3, 3), 3),
         "StreamDockM3": (15, (3, 5), 3),
         "K1Pro": (6, (2, 3), 3),
         "StreamDockN4Pro": (10, (2, 5), 4),
@@ -243,7 +247,10 @@ def test_vendor_ids_and_enumerate():
     check(STREAMDOCK_VENDOR_ID_STRINGS == VENDOR_ID_STRINGS, "DeckManager VID set wired to package")
     check("6603" in VENDOR_ID_STRINGS and "5548" in VENDOR_ID_STRINGS, "known MiraBox VIDs present")
     check("0fd9" not in VENDOR_ID_STRINGS, "Elgato VID not claimed by StreamDock")
-    check(enumerate_stream_dock_decks() == [], "enumerate returns [] with no hardware")
+    decks = enumerate_stream_dock_decks()
+    check(isinstance(decks, list), "enumerate returns a list")
+    check(all(getattr(d, "deck_type", None) for d in decks),
+          "every enumerated deck looks like a StreamDockDeck (may be [] without hardware)")
 
 
 def main():

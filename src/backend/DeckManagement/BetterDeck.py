@@ -139,6 +139,17 @@ class BetterDeck():
             except Exception:
                 pass
 
+    def sleep_panel(self):
+        """Power the panel off while the host is locked, for decks that support
+        a true display-off (e.g. the StreamDock HAN command). Forwarded to the
+        wrapped deck when provided; a no-op for decks (Elgato/Fake) without it."""
+        fn = getattr(self.deck, "sleep_panel", None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+
     def deck_type(self):
         """
         Retrieves the model of Stream Deck.

@@ -7,7 +7,9 @@ and brightness control, and an input reader thread that decodes HID reports
 into structured :class:`StreamDockInput` events.
 """
 
+import fcntl
 import io
+import os
 import time
 import threading
 from dataclasses import dataclass
@@ -41,7 +43,12 @@ class StreamDockInput:
 class StreamDockDevice:
     """A single attached StreamDock, addressed by its model's data tables."""
 
-    HEARTBEAT_INTERVAL = 10.0  # seconds
+    # CONNECT keep-alive cadence. The firmware treats a quiet host as gone and
+    # falls back to its onboard behaviour (community reverse engineering says
+    # within a few seconds), so poll well under that.
+    HEARTBEAT_INTERVAL = 2.0  # seconds
+    # Settle time after a USB port reset before reopening the HID interface.
+    RESET_SETTLE = 2.0  # seconds
 
     def __init__(self, path, vendor_id: int, product_id: int, serial_number: str, model: StreamDockModel):
         self.path = path
@@ -72,6 +79,7 @@ class StreamDockDevice:
     def open(self) -> bool:
         if not self.hid.open(self.path):
             return False
+        self._disconnected = False
         m = self.model
         self.hid.set_report_config(m.report_input, m.report_output, m.report_feature, m.report_id)
         # Run the same display init used on resume, so launching also un-freezes a
@@ -195,6 +203,11 @@ class StreamDockDevice:
         factory content shows through; CLE alone doesn't visibly wipe some panels.
         """
         m = self.model
+        # Official connect handshake: MOD=software first, then DIS + LIG. The
+        # firmware only honours host-drawn images in software mode, and after a
+        # latch (suspend / DC) the post-reset reopen needs this exact sequence.
+        self.hid.set_mode(StreamDockHID.MODE_SOFTWARE)
+        time.sleep(0.05)
         self.hid.wakeup_screen()
         self.hid.set_key_brightness(self._last_brightness)
         self.hid.clear_all_keys()
@@ -207,20 +220,99 @@ class StreamDockDevice:
             self.hid.set_key_image(jpeg, hw)
         self.hid.refresh_screen()
 
-    def reinit_panel(self):
-        """Re-run the panel's display init and re-push the last drawn images on
-        the existing handle.
+    def sleep_panel(self):
+        """Turn the panel truly off (HAN). Reversed by the DIS in open()/
+        reinit_panel(). Brightness 0 only dims; HAN powers the display down,
+        matching how Stream Decks look when the host locks."""
+        try:
+            self.hid.sleep_screen()
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} sleep_panel failed: {e}")
 
-        Used to recover the panel after the lock-screen saver blanks it (see
-        ``ScreenSaver.hide``): the single-screen panel ignores plain redraws until
-        it's re-woken. Resume-from-suspend is handled separately by a full
-        reconnect in ``DeckManager`` (the handle re-enumerates on resume), so this
-        is the awake, same-handle path only.
+    def reinit_panel(self) -> bool:
+        """Fully recover the panel: close, USB port reset, reopen, repaint.
+
+        After a host suspend (or its explicit DC command) the firmware latches
+        into a "host gone" state: it ACKs every display write (BAT/DIS/LIG/HAN)
+        but renders none of them; input keeps working; the frozen image stays.
+        Hardware-verified on the N3: a fresh open alone does NOT clear it, the
+        MOD/DIS/LIG handshake alone does NOT clear it, a USB reset alone does
+        NOT clear it -- but USBDEVFS_RESET followed by a fresh open running the
+        official handshake does, no physical replug needed. ``open()`` re-runs
+        the handshake and repaints the cached key images, so recovery is
+        invisible apart from a ~2s blink. Falls back to a plain reopen where
+        the USB node isn't resettable (e.g. sandboxed without /dev/bus/usb).
         """
         try:
-            self._init_display()
+            if self.is_open:
+                self.close()
+            if self._usbdevfs_reset():
+                time.sleep(self.RESET_SETTLE)  # hid interface re-binds
+                self._refresh_path()
+            if self.open():
+                return True
+            log.error(f"StreamDock {self.serial_number}: reopen after reset failed")
         except Exception as e:
             log.error(f"StreamDock {self.serial_number} panel re-init failed: {e}")
+        return False
+
+    def _usb_device_node(self) -> Optional[str]:
+        """Resolve this device's usbfs node (/dev/bus/usb/BBB/DDD) via sysfs."""
+        base = "/sys/bus/usb/devices"
+        try:
+            for name in os.listdir(base):
+                d = os.path.join(base, name)
+                try:
+                    with open(os.path.join(d, "idVendor")) as f:
+                        vid = int(f.read().strip(), 16)
+                    with open(os.path.join(d, "idProduct")) as f:
+                        pid = int(f.read().strip(), 16)
+                except (OSError, ValueError):
+                    continue
+                if vid != self.vendor_id or pid != self.product_id:
+                    continue
+                try:
+                    with open(os.path.join(d, "serial")) as f:
+                        serial = f.read().strip()
+                except OSError:
+                    serial = ""
+                if self.serial_number and serial and serial != self.serial_number:
+                    continue
+                with open(os.path.join(d, "busnum")) as f:
+                    bus = int(f.read())
+                with open(os.path.join(d, "devnum")) as f:
+                    dev = int(f.read())
+                return f"/dev/bus/usb/{bus:03d}/{dev:03d}"
+        except OSError:
+            pass
+        return None
+
+    def _usbdevfs_reset(self) -> bool:
+        """Issue USBDEVFS_RESET on the device -- a logical re-plug. Needs rw on
+        the usbfs node (granted by the uaccess udev rules)."""
+        node = self._usb_device_node()
+        if node is None:
+            log.warning(f"StreamDock {self.serial_number}: usb node not found; skipping reset")
+            return False
+        try:
+            with open(node, "wb") as f:
+                fcntl.ioctl(f, 0x5514, 0)  # USBDEVFS_RESET = _IO('U', 20)
+            log.info(f"StreamDock {self.serial_number}: USB reset issued on {node}")
+            return True
+        except Exception as e:
+            log.warning(f"StreamDock {self.serial_number}: USB reset unavailable ({e}); plain reopen")
+            return False
+
+    def _refresh_path(self):
+        """Re-resolve the HID path after a reset (the hidraw node can move)."""
+        try:
+            for info in StreamDockHID.enumerate(self.vendor_id, self.product_id):
+                serial = info.get("serial_number") or ""
+                if not self.serial_number or not serial or serial == self.serial_number:
+                    self.path = info.get("path", self.path)
+                    return
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Input

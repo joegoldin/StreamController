@@ -156,6 +156,24 @@ class StreamDockHID:
     # ------------------------------------------------------------------ #
     # Screen / panel control
     # ------------------------------------------------------------------ #
+    # Device operating modes (MOD command). The firmware boots into KEYBOARD
+    # mode on some models; SOFTWARE mode is what the official app selects at
+    # connect and is what host-drawn images expect.
+    MODE_KEYBOARD = 1
+    MODE_CALCULATOR = 2
+    MODE_SOFTWARE = 3
+
+    def set_mode(self, mode: int):
+        """MOD: select the device operating mode (ASCII digit payload).
+
+        Part of the official connect handshake (MOD=software, then DIS + LIG).
+        Hardware note (N3): after a host suspend -- or the DC command -- the
+        firmware latches into a "host gone" state that ACKs but ignores all
+        display writes; a USB port reset followed by a fresh open + this
+        handshake clears it. Either step alone does not.
+        """
+        self._crt("MOD", b"\x00\x00" + bytes([0x30 + (mode & 0x0F)]))
+
     def wakeup_screen(self):
         self._crt("DIS")
 
