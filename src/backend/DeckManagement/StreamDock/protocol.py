@@ -26,6 +26,7 @@ optional big-endian parameters, zero-padded to the report size. Bulk payloads
 
 import struct
 import threading
+import time
 from typing import Optional, List
 
 import hid
@@ -44,6 +45,7 @@ class StreamDockHID:
         self._output_report_size = 0
         self._feature_report_size = 0
         self._write_lock = threading.RLock()
+        self._write_started_at: Optional[float] = None
 
     # ------------------------------------------------------------------ #
     # Enumeration
@@ -114,24 +116,39 @@ class StreamDockHID:
         with self._write_lock:
             if self._device is None:
                 return
-            pkt = crt + cmd.encode("ascii") + params
-            # NOTE: hidapi treats the first byte of write() as the HID report id.
-            # When it is 0x00 the byte is stripped before transmission; when it
-            # is non-zero the whole buffer is sent verbatim. Command packets here
-            # always start with the ``CRT`` header (first byte 'C' = 0x43, never
-            # zero), so the device receives the bytes exactly as written -- we
-            # must NOT prepend a separate report-id byte. (Bulk chunks that start
-            # with 0x00 are compensated below.)
-            self._device.write(self._pad(pkt))
+            self._write_started_at = time.monotonic()
+            try:
+                pkt = crt + cmd.encode("ascii") + params
+                # NOTE: hidapi treats the first byte of write() as the HID report id.
+                # When it is 0x00 the byte is stripped before transmission; when it
+                # is non-zero the whole buffer is sent verbatim. Command packets here
+                # always start with the ``CRT`` header (first byte 'C' = 0x43, never
+                # zero), so the device receives the bytes exactly as written -- we
+                # must NOT prepend a separate report-id byte. (Bulk chunks that start
+                # with 0x00 are compensated below.)
+                self._device.write(self._pad(pkt))
 
-            if bulk:
-                size = self._report_size
-                for i in range(0, len(bulk), size):
-                    chunk = bulk[i:i + size]
-                    # A chunk starting with 0x00 would have that byte stripped as
-                    # a report id, so prepend an extra 0x00 to preserve the data.
-                    prefix = b"\x00" if chunk[:1] == b"\x00" else b""
-                    self._device.write(self._pad(prefix + chunk))
+                if bulk:
+                    size = self._report_size
+                    for i in range(0, len(bulk), size):
+                        chunk = bulk[i:i + size]
+                        # A chunk starting with 0x00 would have that byte stripped as
+                        # a report id, so prepend an extra 0x00 to preserve the data.
+                        prefix = b"\x00" if chunk[:1] == b"\x00" else b""
+                        self._device.write(self._pad(prefix + chunk))
+            finally:
+                self._write_started_at = None
+
+    def write_stalled(self, threshold: float) -> bool:
+        """Return whether the active HID write has exceeded ``threshold`` seconds.
+
+        Input reads use a separate thread, so a wedged output endpoint can leave
+        buttons working while every display update and CONNECT keepalive queues
+        behind the same write lock. This lock-free timestamp lets that reader
+        report the otherwise invisible failure mode.
+        """
+        started_at = self._write_started_at
+        return started_at is not None and time.monotonic() - started_at >= threshold
 
     # ------------------------------------------------------------------ #
     # Read
