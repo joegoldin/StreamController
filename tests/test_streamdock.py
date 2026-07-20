@@ -11,6 +11,7 @@ Run from the repo root:  python3 tests/test_streamdock.py
 
 import os
 import sys
+import threading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -28,6 +29,7 @@ from src.backend.DeckManagement.StreamDockDeck import (
     enumerate_stream_dock_decks,
     STREAMDOCK_VENDOR_ID_STRINGS,
 )
+from src.backend.DeckManagement.StreamDock.protocol import StreamDockHID
 from StreamDeck.Devices.StreamDeck import DialEventType, TouchscreenEventType
 
 
@@ -242,6 +244,36 @@ def test_refresh_worker_lifecycle():
     check(not deck._refresh_thread.is_alive(), "refresh thread stopped after close()")
 
 
+def test_write_stall_detection():
+    print("write stall detection:")
+
+    class BlockingHIDDevice:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def write(self, _data):
+            self.entered.set()
+            self.release.wait(timeout=2)
+
+    transport = StreamDockHID()
+    blocking_device = BlockingHIDDevice()
+    transport._device = blocking_device
+    transport._is_open = True
+    transport.set_report_config(513, 1025, 0, 0)
+
+    check(hasattr(transport, "write_stalled"), "transport exposes write-stall telemetry")
+
+    writer = threading.Thread(target=transport.heartbeat)
+    writer.start()
+    check(blocking_device.entered.wait(timeout=1), "test write reached the HID backend")
+    check(transport.write_stalled(0), "in-flight blocked write is reported as stalled")
+
+    blocking_device.release.set()
+    writer.join(timeout=1)
+    check(not transport.write_stalled(0), "completed write is no longer reported as stalled")
+
+
 def test_vendor_ids_and_enumerate():
     print("vendor ids + enumerate:")
     check(STREAMDOCK_VENDOR_ID_STRINGS == VENDOR_ID_STRINGS, "DeckManager VID set wired to package")
@@ -262,6 +294,7 @@ def main():
         test_layouts,
         test_end_to_end_image_pipeline,
         test_refresh_worker_lifecycle,
+        test_write_stall_detection,
         test_vendor_ids_and_enumerate,
     ]
     for t in tests:

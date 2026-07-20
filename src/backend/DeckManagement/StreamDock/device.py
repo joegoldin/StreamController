@@ -47,6 +47,10 @@ class StreamDockDevice:
     # falls back to its onboard behaviour (community reverse engineering says
     # within a few seconds), so poll well under that.
     HEARTBEAT_INTERVAL = 2.0  # seconds
+    # A normal CRT command/image transfer completes far below this. If it does
+    # not, the HID output path is wedged even though the independent input path
+    # may still deliver button reports.
+    WRITE_STALL_THRESHOLD = 5.0  # seconds
     # Settle time after a USB port reset before reopening the HID interface.
     RESET_SETTLE = 2.0  # seconds
 
@@ -345,6 +349,8 @@ class StreamDockDevice:
 
     def _read_loop(self):
         errors = 0
+        write_stall_reported = False
+        write_stalled = getattr(self.hid, "write_stalled", lambda _threshold: False)
         while self._run:
             try:
                 arr = self.hid.read(timeout_ms=100)
@@ -366,6 +372,15 @@ class StreamDockDevice:
                     break
                 time.sleep(0.1)
                 continue
+            stalled = write_stalled(self.WRITE_STALL_THRESHOLD)
+            if stalled and not write_stall_reported:
+                log.error(
+                    f"StreamDock {self.serial_number} HID write blocked for at least "
+                    f"{self.WRITE_STALL_THRESHOLD:.0f}s; display output and keepalive are stalled"
+                )
+                write_stall_reported = True
+            elif not stalled:
+                write_stall_reported = False
             # None is a benign read timeout (already throttled by timeout_ms).
             if arr is None:
                 continue
