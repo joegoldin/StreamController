@@ -219,6 +219,12 @@ class DeckManager:
         GLib.idle_add(self.connect_new_decks)
 
     def connect_new_decks(self):
+        # A fast USB reset/replug can reuse the same hidraw path while
+        # usbmonitor delivers only the new connect event. Drop the dead
+        # controller before comparing ids, otherwise the replacement deck is
+        # mistaken for the already-loaded one and never added back.
+        self._remove_disconnected_decks()
+
         # Get already loaded deck serial ids
         loaded_deck_ids = []
         for controller in self.deck_controller:
@@ -232,6 +238,20 @@ class DeckManager:
 
         self.check_for_errors_if_window_ready()
 
+    def _remove_disconnected_decks(self) -> None:
+        for controller in list(self.deck_controller):
+            try:
+                if controller.deck.connected():
+                    continue
+                log.info(f"Removing disconnected deck before enumeration: {controller.deck.id()}")
+                try:
+                    controller.deck.close()
+                except Exception as e:
+                    log.warning(f"Failed to close disconnected deck: {e}")
+                self.remove_controller(controller)
+            except Exception as e:
+                log.error(f"Failed to reconcile disconnected deck: {e}")
+
 
     def on_disconnect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} disconnected")
@@ -239,9 +259,7 @@ class DeckManager:
         if vendor_id != ELGATO_VENDOR_ID and vendor_id not in STREAMDOCK_VENDOR_ID_STRINGS:
             return
 
-        for controller in list(self.deck_controller):
-            if not controller.deck.connected():
-                self.remove_controller(controller)
+        self._remove_disconnected_decks()
 
         self.check_for_errors_if_window_ready()
 
