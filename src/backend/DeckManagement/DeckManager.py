@@ -209,19 +209,43 @@ class DeckManager:
         # mistaken for the already-loaded one and never added back.
         self._remove_disconnected_decks()
 
-        # Get already loaded deck serial ids
+        # Snapshot recovery before reading ids: recovery may change a HID path
+        # and release ownership between the two calls.
         loaded_deck_ids = []
+        recovering_deck_identities = set()
         for controller in self.deck_controller:
+            reinitializing = getattr(controller.deck, "reinitializing", None)
+            if callable(reinitializing) and reinitializing():
+                identity = self._deck_identity(controller.deck)
+                if identity is not None:
+                    recovering_deck_identities.add(identity)
             loaded_deck_ids.append(controller.deck.id())
 
         for deck in list(DeviceManager().enumerate()) + enumerate_stream_dock_decks():
             if deck.id() in loaded_deck_ids:
+                continue
+            if (
+                recovering_deck_identities
+                and self._deck_identity(deck) in recovering_deck_identities
+            ):
+                log.info(f"Ignoring duplicate enumeration of recovering deck: {deck.id()}")
                 continue
             # Add deck
             self.add_newly_connected_deck(deck)
 
         if recursive_hasattr(gl, "app.main_win"):
             GLib.idle_add(gl.app.main_win.check_for_errors)
+
+    @staticmethod
+    def _deck_identity(deck):
+        """Return a deck's stable recovery identity when it provides one."""
+        identity = getattr(deck, "recovery_identity", None)
+        if not callable(identity):
+            return None
+        try:
+            return identity()
+        except Exception:
+            return None
 
     def _remove_disconnected_decks(self) -> None:
         for controller in list(self.deck_controller):
@@ -441,11 +465,9 @@ class FlatpakDeckDisconnectThread(threading.Thread):
     def run(self):
         while gl.threads_running:
             time.sleep(2)
-            for controller in list(self.deck_manager.deck_controller):
-                if not controller.deck.connected():
-                    self.deck_manager.remove_controller(controller)
-                    if recursive_hasattr(gl, "app.main_win"):
-                        GLib.idle_add(gl.app.main_win.check_for_errors)
+            GLib.idle_add(self.deck_manager._remove_disconnected_decks)
+            if recursive_hasattr(gl, "app.main_win"):
+                GLib.idle_add(gl.app.main_win.check_for_errors)
 
 class DetectResumeThread(threading.Thread):
     def __init__(self, deck_manager: DeckManager):
