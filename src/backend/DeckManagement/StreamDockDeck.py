@@ -255,7 +255,11 @@ class StreamDockDeck:
         except Exception as e:
             log.error(f"StreamDock reset failed: {e}")
 
-    def reinit_panel(self) -> None:
+    def reinitializing(self) -> bool:
+        """Return whether this deck currently owns an in-place recovery."""
+        return self._reinit_lock.locked()
+
+    def reinit_panel(self) -> bool:
         """Fully recover the panel: USB reset + reopen + official handshake +
         repaint of the last drawn images. Clears the firmware's "host gone"
         latch (frozen display, writes ACKed but ignored) that engages across a
@@ -266,18 +270,25 @@ class StreamDockDeck:
         include the GTK main loop) and is single-flight: a re-entrant call
         while a recovery is already running is dropped.
         """
-        if self._reinit_lock.locked():
-            return
+        if not self._reinit_lock.acquire(blocking=False):
+            return False
 
         def _run():
-            with self._reinit_lock:
-                try:
-                    self.device.reinit_panel()
-                    self._mark_dirty()
-                except Exception as e:
-                    log.error(f"StreamDock reinit_panel failed: {e}")
+            try:
+                self.device.reinit_panel()
+                self._mark_dirty()
+            except Exception as e:
+                log.error(f"StreamDock reinit_panel failed: {e}")
+            finally:
+                self._reinit_lock.release()
 
-        threading.Thread(target=_run, name="StreamDockReinit", daemon=True).start()
+        try:
+            threading.Thread(target=_run, name="StreamDockReinit", daemon=True).start()
+        except Exception as e:
+            self._reinit_lock.release()
+            log.error(f"Failed to start StreamDock panel recovery: {e}")
+            return False
+        return True
 
     def sleep_panel(self) -> None:
         """Power the panel off (HAN) -- used while the host is locked. The next

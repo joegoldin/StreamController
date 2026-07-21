@@ -139,6 +139,16 @@ class BetterDeck():
             except Exception:
                 pass
 
+    def reinitializing(self) -> bool:
+        """Whether the wrapped deck is currently recovering in place."""
+        fn = getattr(self.deck, "reinitializing", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:
+                pass
+        return False
+
     def sleep_panel(self):
         """Power the panel off while the host is locked, for decks that support
         a true display-off (e.g. the StreamDock HAN command). Forwarded to the

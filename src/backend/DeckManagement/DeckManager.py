@@ -226,6 +226,10 @@ class DeckManager:
     def _remove_disconnected_decks(self) -> None:
         for controller in list(self.deck_controller):
             try:
+                reinitializing = getattr(controller.deck, "reinitializing", None)
+                if callable(reinitializing) and reinitializing():
+                    log.info(f"Preserving recovering deck during enumeration: {controller.deck.id()}")
+                    continue
                 if controller.deck.connected():
                     continue
                 log.info(f"Removing disconnected deck before enumeration: {controller.deck.id()}")
