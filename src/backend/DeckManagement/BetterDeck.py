@@ -128,10 +128,9 @@ class BetterDeck():
         return set()
 
     def reinit_panel(self):
-        """Force-re-wake and repaint the panel, for decks that can wedge their
-        display while blanked (e.g. the StreamDock single-screen panel after a
-        screen-lock blanks it). Forwarded to the wrapped deck when it supports
-        it; a no-op for decks (Elgato/Fake) that don't need it."""
+        """Attempt transport recovery and repaint for decks that can wedge
+        after suspend or disconnect. Forwarded to the wrapped deck when it
+        supports it; a no-op for decks (Elgato/Fake) that don't need it."""
         fn = getattr(self.deck, "reinit_panel", None)
         if callable(fn):
             try:
@@ -160,9 +159,11 @@ class BetterDeck():
         return None
 
     def sleep_panel(self):
-        """Power the panel off while the host is locked, for decks that support
-        a true display-off (e.g. the StreamDock HAN command). Forwarded to the
-        wrapped deck when provided; a no-op for decks (Elgato/Fake) without it."""
+        """Forward an explicit hardware display-off request when supported.
+
+        Automatic lock handling intentionally uses the ordinary screensaver:
+        HAN can leave StreamDock N3 firmware ignoring display writes.
+        """
         fn = getattr(self.deck, "sleep_panel", None)
         if callable(fn):
             try:

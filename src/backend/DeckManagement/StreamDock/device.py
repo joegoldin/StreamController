@@ -226,8 +226,9 @@ class StreamDockDevice:
 
     def sleep_panel(self):
         """Turn the panel truly off (HAN). Reversed by the DIS in open()/
-        reinit_panel(). Brightness 0 only dims; HAN powers the display down,
-        matching how Stream Decks look when the host locks."""
+        reinit_panel(). This is an explicit low-level operation and is not used
+        for automatic lock handling: some N3 firmware latches after HAN and
+        ignores later display writes until physically replugged."""
         try:
             self.hid.sleep_screen()
         except Exception as e:
@@ -236,16 +237,12 @@ class StreamDockDevice:
     def reinit_panel(self) -> bool:
         """Fully recover the panel: close, USB port reset, reopen, repaint.
 
-        After a host suspend (or its explicit DC command) the firmware latches
-        into a "host gone" state: it ACKs every display write (BAT/DIS/LIG/HAN)
-        but renders none of them; input keeps working; the frozen image stays.
-        Hardware-verified on the N3: a fresh open alone does NOT clear it, the
-        MOD/DIS/LIG handshake alone does NOT clear it, a USB reset alone does
-        NOT clear it -- but USBDEVFS_RESET followed by a fresh open running the
-        official handshake does, no physical replug needed. ``open()`` re-runs
-        the handshake and repaints the cached key images, so recovery is
-        invisible apart from a ~2s blink. Falls back to a plain reopen where
-        the USB node isn't resettable (e.g. sandboxed without /dev/bus/usb).
+        This is best-effort suspend/disconnect recovery. Some N3 firmware states
+        ACK display writes while rendering none of them; a logical USB reset and
+        fresh MOD/DIS/LIG handshake can recover some transport disruptions but
+        cannot reliably clear a latch caused by HAN. Automatic lock handling
+        therefore never sends HAN. Falls back to a plain reopen where the USB
+        node isn't resettable (e.g. sandboxed without /dev/bus/usb).
         """
         try:
             if self.is_open:

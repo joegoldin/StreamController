@@ -297,11 +297,9 @@ class StreamDockDeck:
         return self._reinit_lock.locked()
 
     def reinit_panel(self) -> bool:
-        """Fully recover the panel: USB reset + reopen + official handshake +
-        repaint of the last drawn images. Clears the firmware's "host gone"
-        latch (frozen display, writes ACKed but ignored) that engages across a
-        host suspend or a lock-screen blank -- the software equivalent of a
-        physical replug.
+        """Attempt panel recovery: USB reset + reopen + official handshake +
+        repaint of the last drawn images. Used for suspend/disconnect recovery;
+        normal lock-screen transitions use only the ordinary screensaver.
 
         Runs in a background thread (the reset + settle takes ~3s and callers
         include the GTK main loop) and is single-flight: a re-entrant call
@@ -328,8 +326,11 @@ class StreamDockDeck:
         return True
 
     def sleep_panel(self) -> None:
-        """Power the panel off (HAN) -- used while the host is locked. The next
-        reinit_panel()/open() turns it back on."""
+        """Send an explicit HAN panel-off request.
+
+        Automatic lock handling does not call this because HAN can latch N3
+        firmware into a display-frozen state requiring a physical replug.
+        """
         try:
             self.device.sleep_panel()
         except Exception as e:

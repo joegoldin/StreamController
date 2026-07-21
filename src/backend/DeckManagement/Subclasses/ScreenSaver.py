@@ -133,15 +133,6 @@ class ScreenSaver:
             self.deck_controller.load_default_page()
         self.set_time(self.time_delay)
 
-        # Some panels (e.g. the StreamDock single-screen N3) wedge their display
-        # while blanked by the lock-screen saver and then ignore the plain redraw
-        # above, staying frozen until physically replugged. Re-wake and repaint
-        # the panel so the restored page actually shows. No-op for decks that
-        # don't need it (Elgato/Fake decks don't provide reinit_panel).
-        reinit = getattr(self.deck_controller.deck, "reinit_panel", None)
-        if callable(reinit):
-            reinit()
-
     def on_key_change(self):
         self.last_key_change_time = time.time()
         if self.showing:

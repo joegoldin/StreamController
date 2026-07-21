@@ -66,12 +66,6 @@ class LockScreenManager:
             controller.allow_interaction = not active
             if active:
                 controller.screen_saver.show()
-                # Decks with a true display-off (StreamDock HAN) power their
-                # panel down for the lock, like Stream Decks going dark; the
-                # screensaver's hide() re-inits and repaints them on unlock.
-                sleep_panel = getattr(controller.deck, "sleep_panel", None)
-                if callable(sleep_panel):
-                    sleep_panel()
             else:
                 controller.screen_saver.hide()
 
