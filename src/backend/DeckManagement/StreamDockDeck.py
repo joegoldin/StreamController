@@ -25,9 +25,11 @@ the terms of the GNU General Public License as published by the Free Software
 Foundation, either version 3 of the License, or any later version.
 """
 
-import time
 import hashlib
+import os
+import re
 import threading
+import time
 
 from loguru import logger as log
 
@@ -56,6 +58,26 @@ STREAMDOCK_VENDOR_ID_STRINGS = VENDOR_ID_STRINGS
 # image changes. ~30 ms keeps animations smooth (~30 fps) while coalescing the
 # burst of per-key writes a full page render produces into a single refresh.
 _REFRESH_INTERVAL = 0.03
+_USB_TOPOLOGY_RE = re.compile(r"^\d+-\d+(?:\.\d+)*$")
+
+
+def _usb_topology_from_hid_path(path) -> str | None:
+    """Resolve a stable USB port chain from a libusb or hidraw path."""
+    if isinstance(path, bytes):
+        path = path.decode(errors="ignore")
+    path = str(path)
+
+    candidates = [os.path.basename(path)]
+    basename = candidates[0]
+    if basename.startswith("hidraw"):
+        target = os.path.realpath(f"/sys/class/hidraw/{basename}/device")
+        candidates.extend(reversed(target.split(os.sep)))
+
+    for candidate in candidates:
+        topology = candidate.split(":", 1)[0]
+        if _USB_TOPOLOGY_RE.fullmatch(topology):
+            return topology
+    return None
 
 
 class StreamDockDeck:
@@ -76,6 +98,7 @@ class StreamDockDeck:
         self._vendor_id = device.vendor_id
         self._product_id = device.product_id
         self._serial = device.serial_number
+        self._usb_topology = _usb_topology_from_hid_path(device.path)
 
         self._is_open = False
 
@@ -152,7 +175,7 @@ class StreamDockDeck:
         return self._product_id
 
     def id(self) -> str:
-        path = self._path
+        path = self.device.path
         if isinstance(path, bytes):
             path = path.decode(errors="ignore")
         return str(path)
@@ -165,6 +188,20 @@ class StreamDockDeck:
         # device stays on the same port.
         path = self._path if isinstance(self._path, bytes) else str(self._path).encode()
         return "streamdock-" + hashlib.sha1(path).hexdigest()[:12]
+
+    def recovery_identity(self):
+        """Stable physical identity used while a USB reset can change HID paths."""
+        if self._serial:
+            return ("streamdock", self._vendor_id, self._product_id, "serial", self._serial)
+        if self._usb_topology:
+            return (
+                "streamdock",
+                self._vendor_id,
+                self._product_id,
+                "topology",
+                self._usb_topology,
+            )
+        return None
 
     def get_firmware_version(self) -> str:
         return self.device.firmware_version or ""

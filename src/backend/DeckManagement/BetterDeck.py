@@ -149,6 +149,16 @@ class BetterDeck():
                 pass
         return False
 
+    def recovery_identity(self):
+        """Stable identity of a wrapped deck while its transport path changes."""
+        fn = getattr(self.deck, "recovery_identity", None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+        return None
+
     def sleep_panel(self):
         """Power the panel off while the host is locked, for decks that support
         a true display-off (e.g. the StreamDock HAN command). Forwarded to the
