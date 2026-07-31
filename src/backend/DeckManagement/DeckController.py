@@ -151,6 +151,7 @@ class MediaPlayerThread(threading.Thread):
         self.tasks: list[MediaPlayerTask] = []
         self.image_tasks = {}
         self.touchscreen_task = None
+        self.post_tasks: list[MediaPlayerTask] = []
         self._wake_event = threading.Event()
 
         self.fps: list[float] = []
@@ -196,7 +197,12 @@ class MediaPlayerThread(threading.Thread):
             end = time.time()
 
             # Use low FPS when idle (no animated content, no pending tasks)
-            has_pending = bool(self.tasks or self.image_tasks or self.touchscreen_task)
+            has_pending = bool(
+                self.tasks
+                or self.image_tasks
+                or self.touchscreen_task
+                or self.post_tasks
+            )
             if has_pending or has_bg_video or getattr(self, '_cached_needs_ticks', False):
                 target_fps = self.FPS
             else:
@@ -297,6 +303,17 @@ class MediaPlayerThread(threading.Thread):
         )
         self._wake_event.set()
 
+    def add_post_task(self, method: callable, *args, **kwargs):
+        """Run a task after the current page's queued image writes are flushed."""
+        self.post_tasks.append(MediaPlayerTask(
+            deck_controller=self.deck_controller,
+            page=self.deck_controller.active_page,
+            _callable=method,
+            args=args,
+            kwargs=kwargs,
+        ))
+        self._wake_event.set()
+
     def perform_media_player_tasks(self):
         for task in self.tasks.copy():
             if task.page is self.deck_controller.active_page:
@@ -318,6 +335,16 @@ class MediaPlayerThread(threading.Thread):
             self.touchscreen_task.run()
             del self.touchscreen_task
             self.touchscreen_task = None
+
+        for task in self.post_tasks.copy():
+            if task.page is self.deck_controller.active_page:
+                task.run()
+
+            try:
+                self.post_tasks.remove(task)
+            except ValueError:
+                pass
+
     def check_connection(self):
         try:
             self.deck_controller.deck.get_firmware_version()
@@ -931,6 +958,7 @@ class DeckController:
         ticks = self.media_player.media_ticks
         self.media_player.tasks.clear()
         self.media_player.image_tasks.clear()
+        self.media_player.post_tasks.clear()
 
         # Wake it up instead of waiting for its idle cycle to come around on its own
         self.media_player._wake_event.set()

@@ -103,14 +103,123 @@ class _RecoveringDevice:
         self.entered = threading.Event()
         self.release = threading.Event()
         self.calls = 0
+        self.display_calls = 0
 
     def reinit_panel(self):
         self.calls += 1
         self.entered.set()
         self.release.wait(timeout=2)
 
+    def reinit_display(self):
+        self.display_calls += 1
+        return True
+
+
+class _BlockingDisplayDevice(_RecoveringDevice):
+    def __init__(self):
+        super().__init__()
+        self.display_entered = threading.Event()
+        self.display_release = threading.Event()
+        self.recovery_entered = threading.Event()
+
+    def reinit_display(self):
+        self.display_calls += 1
+        self.display_entered.set()
+        self.display_release.wait(timeout=2)
+        return True
+
+    def reinit_panel(self):
+        self.calls += 1
+        self.recovery_entered.set()
+        # Model close/reset preempting the old output transport.
+        self.display_release.set()
+
 
 class StreamDockReconnectTests(unittest.TestCase):
+    def test_display_reinit_preserves_input_delivery(self):
+        device = _RecoveringDevice()
+        deck = StreamDockDeck(device)
+        key_events = []
+        deck.set_key_callback(lambda _deck, key, pressed: key_events.append((key, pressed)))
+
+        self.assertTrue(deck.reinit_display())
+        device.input_callback(
+            device,
+            SimpleNamespace(type="key", index=0, pressed=True),
+        )
+
+        self.assertEqual(device.display_calls, 1)
+        self.assertEqual(key_events, [(0, True)])
+
+    def test_display_reinit_is_suppressed_during_full_recovery(self):
+        device = _RecoveringDevice()
+        deck = StreamDockDeck(device)
+
+        try:
+            self.assertTrue(deck.reinit_panel())
+            self.assertTrue(device.entered.wait(timeout=1))
+            self.assertFalse(deck.reinit_display())
+        finally:
+            device.release.set()
+
+        deadline = time.monotonic() + 1
+        while deck.reinitializing() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        self.assertFalse(deck.reinitializing())
+        self.assertEqual(device.display_calls, 0)
+
+    def test_better_deck_forwards_display_reinit(self):
+        wrapped = _RecoveringDevice()
+        deck = object.__new__(BetterDeck)
+        deck.deck = wrapped
+
+        self.assertTrue(deck.reinit_display())
+        self.assertEqual(wrapped.display_calls, 1)
+
+    def test_better_deck_ignores_unsupported_or_failing_display_reinit(self):
+        deck = object.__new__(BetterDeck)
+        deck.deck = object()
+        self.assertFalse(deck.reinit_display())
+
+        deck.deck = SimpleNamespace(
+            reinit_display=lambda: (_ for _ in ()).throw(RuntimeError("failed"))
+        )
+        self.assertFalse(deck.reinit_display())
+
+    def test_full_recovery_preempts_blocked_display_reinit_and_preserves_input(self):
+        device = _BlockingDisplayDevice()
+        deck = StreamDockDeck(device)
+        key_events = []
+        deck.set_key_callback(lambda _deck, key, pressed: key_events.append((key, pressed)))
+        display_thread = threading.Thread(target=deck.reinit_display)
+        display_thread.start()
+        self.assertTrue(device.display_entered.wait(timeout=1))
+
+        try:
+            device.input_callback(
+                device,
+                SimpleNamespace(type="key", index=0, pressed=True),
+            )
+            self.assertTrue(deck.reinit_panel())
+            self.assertTrue(device.recovery_entered.wait(timeout=0.25))
+            device.input_callback(
+                device,
+                SimpleNamespace(type="key", index=0, pressed=False),
+            )
+        finally:
+            device.display_release.set()
+            display_thread.join(timeout=1)
+
+        deadline = time.monotonic() + 1
+        while deck.reinitializing() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        self.assertFalse(display_thread.is_alive())
+        self.assertFalse(deck.reinitializing())
+        self.assertEqual(device.calls, 1)
+        self.assertEqual(key_events, [(0, True), (0, False)])
+
     def test_reinit_owns_recovery_before_background_worker_starts(self):
         device = _RecoveringDevice()
         deck = StreamDockDeck(device)

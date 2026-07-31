@@ -224,6 +224,17 @@ class StreamDockDevice:
             self.hid.set_key_image(jpeg, hw)
         self.hid.refresh_screen()
 
+    def reinit_display(self) -> bool:
+        """Reinitialize and repaint the display on the current HID transport."""
+        if not self.is_open:
+            return False
+        try:
+            self._init_display()
+            return True
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} display re-init failed: {e}")
+            return False
+
     def sleep_panel(self):
         """Turn the panel truly off (HAN). Reversed by the DIS in open()/
         reinit_panel(). This is an explicit low-level operation and is not used

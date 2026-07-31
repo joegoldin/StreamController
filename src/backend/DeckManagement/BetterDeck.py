@@ -138,6 +138,16 @@ class BetterDeck():
             except Exception:
                 pass
 
+    def reinit_display(self) -> bool:
+        """Reinitialize display output without resetting a working input transport."""
+        fn = getattr(self.deck, "reinit_display", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:
+                pass
+        return False
+
     def reinitializing(self) -> bool:
         """Whether the wrapped deck is currently recovering in place."""
         fn = getattr(self.deck, "reinitializing", None)

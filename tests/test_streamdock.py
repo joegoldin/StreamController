@@ -45,17 +45,28 @@ class StubHID:
         self.opened = False
         self.closed = False
         self.report_cfg = None
+        self.open_calls = 0
+        self.close_calls = 0
+        self.wakeups = 0
+        self.sleeps = 0
+        self.mode = None
 
     @property
     def is_open(self):
         return self.opened and not self.closed
 
-    def open(self, path): self.opened = True; return True
-    def close(self): self.closed = True
+    def open(self, path):
+        self.open_calls += 1
+        self.opened = True
+        self.closed = False
+        return True
+    def close(self):
+        self.close_calls += 1
+        self.closed = True
     def set_report_config(self, i, o, f, r): self.report_cfg = (i, o, f, r)
     def set_mode(self, mode): self.mode = mode
-    def sleep_screen(self): pass
-    def wakeup_screen(self): pass
+    def sleep_screen(self): self.sleeps += 1
+    def wakeup_screen(self): self.wakeups += 1
     def set_key_brightness(self, b): self.brightness = b
     def clear_all_keys(self): pass
     def clear_key(self, k): self.cleared.append(k)
@@ -223,6 +234,30 @@ def test_end_to_end_image_pipeline():
     check(decoded.size == (112, 112), f"sent JPEG decodes to 112x112 (got {decoded.size})")
 
 
+def test_display_reinit_preserves_input_transport():
+    print("display-only reinitialization:")
+    deck, dev, stub = make_deck("StreamDockN3", pid=0x1003)
+    check(not dev.reinit_display(), "closed HID transport is rejected")
+
+    stub.open(dev.path)
+    stub.open_calls = 0
+    stub.images.clear()
+    stub.wakeups = 0
+    dev._last_brightness = 42
+    dev._last_images = {1: b"CACHED"}
+
+    check(dev.reinit_display(), "display reinitialization succeeds")
+    check(dev.hid is stub, "display reinitialization keeps the HID transport")
+    check(stub.open_calls == 0, "display reinitialization does not reopen HID")
+    check(stub.close_calls == 0, "display reinitialization does not close HID")
+    check(stub.sleeps == 0, "display reinitialization never sends panel sleep")
+    check(stub.mode == StreamDockHID.MODE_SOFTWARE, "display returns to software mode")
+    check(stub.wakeups == 1, "display is explicitly woken")
+    check(stub.brightness == 42, "cached brightness is restored")
+    check((b"CACHED", 1) in stub.images, "cached key image is repainted")
+    check(stub.refreshes == 1, "repaint is committed to the panel")
+
+
 def test_refresh_worker_lifecycle():
     print("refresh worker lifecycle:")
     import time
@@ -293,6 +328,7 @@ def main():
         test_brightness,
         test_layouts,
         test_end_to_end_image_pipeline,
+        test_display_reinit_preserves_input_transport,
         test_refresh_worker_lifecycle,
         test_write_stall_detection,
         test_vendor_ids_and_enumerate,
