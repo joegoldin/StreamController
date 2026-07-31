@@ -57,19 +57,23 @@ Add a distinct `reinit_display()` capability alongside the existing
   Errors remain isolated and logged at the adapter boundary.
 - `BetterDeck.reinit_display()` forwards the optional capability and remains a
   no-op for Elgato, fake, and remote decks.
-- `ScreenSaver.hide()` restores the active/default page first, then requests
-  `reinit_display()`. Restoring the page first updates the StreamDock device's
-  cached images even when the firmware ignored their initial transmission; the
-  display initialization then pushes those current images again.
+- `MediaPlayerThread` supports a page-scoped post task which runs after its
+  ordinary page tasks and pending image writes. `ScreenSaver.hide()` restores
+  the active/default page, then queues `reinit_display()` there. The page writes
+  therefore update the StreamDock device's image cache even when the firmware
+  ignores their initial transmission; display initialization then pushes those
+  current images again.
 
-`StreamDockDeck` uses a short-lived display-operation lock in addition to its
-existing full-recovery lock. Display reinitialization takes the display lock
-without waiting and checks the recovery state before and after acquisition. The
-full recovery worker takes the same display lock before closing the transport.
-This ordering covers either race: an existing full recovery suppresses the
-lighter request, while a full recovery beginning during a live repaint waits
-for that repaint and then proceeds. Duplicate full recoveries remain rejected by
-the existing recovery lock.
+`StreamDockDeck.reinit_display()` skips the light operation when a full recovery
+already owns the device. It deliberately does not hold a second adapter lock
+across HID output. A HID write can stall indefinitely on a wedged endpoint, so
+making `reinit_panel()` wait for a live repaint could prevent the authoritative
+close/reset/open path from ever starting. If full recovery begins after a light
+repaint has started, it proceeds directly to closing the old transport and USB
+recovery rather than waiting at the adapter. The light operation may then fail
+benignly; full recovery performs its own handshake and cached-image repaint
+after reopening. Duplicate full recoveries remain rejected by the existing
+recovery lock.
 
 The low-level HID write lock continues to serialize individual display commands
 with heartbeat and other output writes. Input reads and callbacks remain on
@@ -84,6 +88,11 @@ reopen, handshake, and repaint. If unlock occurs while that recovery is active,
 same display initialization after reopening. Page updates made during recovery
 still populate the device image cache for that repaint.
 
+If suspend recovery starts while the queued unlock repaint is already writing,
+the adapter does not make full recovery wait for that output operation. It can
+proceed immediately to the existing close/reset/open sequence, preserving that
+path's established priority and input-control ownership.
+
 This separation keeps the proven control recovery authoritative while giving a
 connected, input-responsive device the lighter display-only repair it needs.
 
@@ -94,6 +103,10 @@ connected, input-responsive device the lighter display-only repair it needs.
 - Unsupported decks ignore the optional capability.
 - A display request during full transport recovery is skipped rather than
   competing with close/reset/reopen.
+- A full transport recovery beginning during a display request proceeds without
+  waiting for a potentially blocked HID write.
+- A closed HID transport rejects display-only recovery instead of reporting a
+  successful no-op.
 - The existing delayed remove-and-reenumerate fallback remains responsible for
   failed suspend recovery; lock-only recovery does not add another fallback.
 
@@ -101,14 +114,17 @@ connected, input-responsive device the lighter display-only repair it needs.
 
 Regression coverage will prove:
 
-1. Unlock restores the page before requesting display reinitialization.
+1. Unlock restores the page and queues display reinitialization after its image
+   writes have updated the device cache.
 2. Unlock requests display-only recovery and does not request full panel/USB
    recovery.
 3. The StreamDock display-only path performs the mode/wake/brightness/repaint
    sequence without closing or reopening the HID transport.
 4. A full recovery already in progress suppresses the display-only request.
-5. Existing lock policy still avoids `HAN` panel sleep.
-6. The StreamDock transport, reconnect, and lock-screen suites remain green.
+5. A full recovery starting during a blocked display-only request is not
+   blocked, while input events continue to reach callbacks.
+6. Existing lock policy still avoids `HAN` panel sleep.
+7. The StreamDock transport, reconnect, and lock-screen suites remain green.
 
 Hardware acceptance is one lock/unlock and one suspend/lock/unlock cycle on the
 attached N3. The active page must repaint after unlock, and buttons/dials must

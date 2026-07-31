@@ -296,6 +296,16 @@ class StreamDockDeck:
         """Return whether this deck currently owns an in-place recovery."""
         return self._reinit_lock.locked()
 
+    def reinit_display(self) -> bool:
+        """Reinitialize display output without interrupting the input transport."""
+        if self._reinit_lock.locked():
+            return False
+        try:
+            return bool(self.device.reinit_display())
+        except Exception as e:
+            log.error(f"StreamDock display re-init failed: {e}")
+            return False
+
     def reinit_panel(self) -> bool:
         """Attempt panel recovery: USB reset + reopen + official handshake +
         repaint of the last drawn images. Used for suspend/disconnect recovery;

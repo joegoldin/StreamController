@@ -314,6 +314,7 @@ class MediaPlayerThread(threading.Thread):
         self.image_tasks = {}
         self.touchscreen_task = None
         self.screen_task = None
+        self.post_tasks: list[MediaPlayerTask] = []
         self._wake_event = threading.Event()
         self.touchscreen_region_tasks = {}
         self.last_key_image_hashes: dict[int, bytes] = {}
@@ -370,7 +371,7 @@ class MediaPlayerThread(threading.Thread):
             end = time.time()
 
             # Use low FPS when idle (no animated content, no pending tasks)
-            has_pending = bool(self.tasks or self.image_tasks or self.touchscreen_task or self.touchscreen_region_tasks or self.screen_task)
+            has_pending = bool(self.tasks or self.image_tasks or self.touchscreen_task or self.touchscreen_region_tasks or self.screen_task or self.post_tasks)
             if has_pending or has_bg_video or getattr(self, '_cached_needs_ticks', False):
                 target_fps = self.FPS
             else:
@@ -599,6 +600,17 @@ class MediaPlayerThread(threading.Thread):
 
         return merged
 
+    def add_post_task(self, method: callable, *args, **kwargs):
+        """Run a task after the current page's queued image writes are flushed."""
+        self.post_tasks.append(MediaPlayerTask(
+            deck_controller=self.deck_controller,
+            page=self.deck_controller.active_page,
+            _callable=method,
+            args=args,
+            kwargs=kwargs,
+        ))
+        self._wake_event.set()
+
     def perform_media_player_tasks(self):
         for task in self.tasks.copy():
             if task.page is self.deck_controller.active_page:
@@ -688,6 +700,15 @@ class MediaPlayerThread(threading.Thread):
                 if screen_task is not None:
                     screen_task.run()
                     self.last_screen_hash = screen_task.image_hash
+
+        for task in self.post_tasks.copy():
+            if task.page is self.deck_controller.active_page:
+                task.run()
+
+            try:
+                self.post_tasks.remove(task)
+            except ValueError:
+                pass
 
     def check_connection(self):
         try:
@@ -1757,6 +1778,7 @@ class DeckController:
         self.media_player.tasks.clear()
         self.media_player.image_tasks.clear()
         self.media_player.screen_task = None
+        self.media_player.post_tasks.clear()
 
         # Wake it up instead of waiting for its idle cycle to come around on its own
         self.media_player._wake_event.set()
