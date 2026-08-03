@@ -413,8 +413,21 @@ git commit -m "fix(streamdock): prioritize display keepalives"
 Run each test through the pinned package's Python environment:
 
 ```bash
-for test in tests/test_streamdock.py tests/test_streamdock_reconnect.py tests/test_lock_screen_panel.py tests/test_lock_screen_integration.py tests/test_media_player_tasks.py; do sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | bash -s -- "/tmp/StreamController-mirabox-display/$test"; done
-python3 -m compileall -q src/backend/DeckManagement tests
+sc_gi_paths=""
+while IFS= read -r sc_store; do
+  sc_dir="$sc_store/lib/girepository-1.0"
+  if [ -d "$sc_dir" ]; then
+    if [ -n "$sc_gi_paths" ]; then
+      sc_gi_paths="$sc_gi_paths:$sc_dir"
+    else
+      sc_gi_paths="$sc_dir"
+    fi
+  fi
+done < <(nix-store -qR /tmp/streamcontroller-mirabox-result-pinned)
+for test in tests/test_streamdock.py tests/test_streamdock_reconnect.py tests/test_lock_screen_panel.py; do
+  sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | GI_TYPELIB_PATH="$sc_gi_paths" MPLCONFIGDIR=/tmp/matplotlib-streamdock-tests bash -s -- "/tmp/StreamController-mirabox-display/$test"
+done
+sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | GI_TYPELIB_PATH="$sc_gi_paths" MPLCONFIGDIR=/tmp/matplotlib-streamdock-tests bash -s -- -m compileall -q /tmp/StreamController-mirabox-display/src/backend/DeckManagement /tmp/StreamController-mirabox-display/tests
 git diff --check
 ```
 
