@@ -281,17 +281,24 @@ def test_heartbeat_priority_preserves_image_transactions():
     first = threading.Thread(target=transport.set_key_image, args=(b"A" * 1025, 1))
     second = threading.Thread(target=transport.set_key_image, args=(b"B", 2))
     heartbeat = threading.Thread(target=transport.heartbeat)
+    started = []
 
-    first.start()
-    check(recorder.entered.wait(timeout=1), "first image owns the output transaction")
-    second.start()
-    check(wait_for(lambda: getattr(transport, "_normal_waiters", 0) == 1), "second image is queued")
-    heartbeat.start()
-    check(wait_for(lambda: getattr(transport, "_priority_waiters", 0) == 1), "heartbeat is queued with priority")
+    try:
+        first.start()
+        started.append(first)
+        check(recorder.entered.wait(timeout=1), "first image owns the output transaction")
+        second.start()
+        started.append(second)
+        check(wait_for(lambda: getattr(transport, "_normal_waiters", 0) == 1), "second image is queued")
+        heartbeat.start()
+        started.append(heartbeat)
+        check(wait_for(lambda: getattr(transport, "_priority_waiters", 0) == 1), "heartbeat is queued with priority")
+    finally:
+        recorder.release.set()
+        for thread in started:
+            thread.join(timeout=1)
 
-    recorder.release.set()
-    for thread in (first, second, heartbeat):
-        thread.join(timeout=1)
+    for thread in started:
         check(not thread.is_alive(), "queued output thread completed")
 
     payloads = [report[1:] for report in recorder.writes]
