@@ -67,7 +67,7 @@ Register `test_generated_jpeg_quality` in `main()` immediately after `test_end_t
 Run:
 
 ```bash
-sed 's/  main.py "$@"$/  "$@"/' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | bash -s -- /tmp/StreamController-mirabox-display/tests/test_streamdock.py
+sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | bash -s -- /tmp/StreamController-mirabox-display/tests/test_streamdock.py
 ```
 
 Expected: FAIL at `panel clear: JPEG uses quality 100 quantization` because `_black_jpeg()` still uses quality 85.
@@ -406,7 +406,7 @@ git commit -m "fix(streamdock): prioritize display keepalives"
 Run each test through the pinned package's Python environment:
 
 ```bash
-for test in tests/test_streamdock.py tests/test_streamdock_reconnect.py tests/test_lock_screen_panel.py tests/test_lock_screen_integration.py tests/test_media_player_tasks.py; do sed 's/  main.py "$@"$/  "$@"/' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | bash -s -- "/tmp/StreamController-mirabox-display/$test"; done
+for test in tests/test_streamdock.py tests/test_streamdock_reconnect.py tests/test_lock_screen_panel.py tests/test_lock_screen_integration.py tests/test_media_player_tasks.py; do sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-result-pinned/bin/.streamcontroller-wrapped | bash -s -- "/tmp/StreamController-mirabox-display/$test"; done
 python3 -m compileall -q src/backend/DeckManagement tests
 git diff --check
 ```
@@ -482,7 +482,7 @@ the app:
 
 ```bash
 zmx run streamcontroller.mirabox-output-hardening $'\003'
-sed 's/  main.py "$@"$/  "$@"/' /tmp/streamcontroller-mirabox-output-hardening/bin/.streamcontroller-wrapped | bash -s -- /tmp/n3_output_hardening_probe.py
+sed 's#  main.py "$@" *$#  "$@"#' /tmp/streamcontroller-mirabox-output-hardening/bin/.streamcontroller-wrapped | bash -s -- /tmp/n3_output_hardening_probe.py
 zmx run streamcontroller.mirabox-output-hardening-app /tmp/streamcontroller-mirabox-output-hardening/bin/streamcontroller -b
 ```
 
