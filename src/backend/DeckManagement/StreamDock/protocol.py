@@ -18,10 +18,11 @@ come from Steve Murr's independent reverse engineering
 (https://github.com/4ndv/mirajazz, byte-identical MOD frames on N-series
 hardware) and https://github.com/rigor789/mirabox-streamdock-node.
 
-Wire format: every command is an output report beginning with a 5-byte header
-(``b"CRT\\x00\\x00"`` by default) followed by a 3-letter ASCII command and
-optional big-endian parameters, zero-padded to the report size. Bulk payloads
-(e.g. JPEG key images) are streamed in report-sized chunks afterwards.
+Wire format: HIDAPI receives the configured report ID followed by a fixed-size
+protocol payload. Every command payload begins with a 5-byte header
+(``b"CRT\\x00\\x00"`` by default), then a 3-letter ASCII command and optional
+big-endian parameters. Bulk payloads (e.g. JPEG key images) are streamed in
+fixed-size reports afterwards.
 """
 
 import struct
@@ -106,10 +107,13 @@ class StreamDockHID:
             return self._output_report_size - 1
         return self._DEFAULT_REPORT_SIZE
 
-    def _pad(self, buffer: bytes) -> bytes:
-        if len(buffer) >= self._report_size:
-            return buffer
-        return buffer + b"\x00" * (self._report_size - len(buffer))
+    def _encode_report(self, payload: bytes) -> bytes:
+        size = self._report_size
+        if len(payload) > size:
+            raise ValueError(
+                f"StreamDock output payload is {len(payload)} bytes; report limit is {size}"
+            )
+        return bytes([self._report_id]) + payload.ljust(size, b"\x00")
 
     def _crt(self, cmd: str, params: bytes = b"", bulk: bytes = b"", crt: bytes = b"CRT\x00\x00"):
         """Send a CRT command, optionally followed by a streamed bulk payload."""
@@ -119,23 +123,13 @@ class StreamDockHID:
             self._write_started_at = time.monotonic()
             try:
                 pkt = crt + cmd.encode("ascii") + params
-                # NOTE: hidapi treats the first byte of write() as the HID report id.
-                # When it is 0x00 the byte is stripped before transmission; when it
-                # is non-zero the whole buffer is sent verbatim. Command packets here
-                # always start with the ``CRT`` header (first byte 'C' = 0x43, never
-                # zero), so the device receives the bytes exactly as written -- we
-                # must NOT prepend a separate report-id byte. (Bulk chunks that start
-                # with 0x00 are compensated below.)
-                self._device.write(self._pad(pkt))
+                self._device.write(self._encode_report(pkt))
 
                 if bulk:
                     size = self._report_size
                     for i in range(0, len(bulk), size):
                         chunk = bulk[i:i + size]
-                        # A chunk starting with 0x00 would have that byte stripped as
-                        # a report id, so prepend an extra 0x00 to preserve the data.
-                        prefix = b"\x00" if chunk[:1] == b"\x00" else b""
-                        self._device.write(self._pad(prefix + chunk))
+                        self._device.write(self._encode_report(chunk))
             finally:
                 self._write_started_at = None
 
