@@ -13,6 +13,7 @@ import io
 import os
 import sys
 import threading
+import time
 
 from PIL import Image
 
@@ -314,6 +315,34 @@ class RecordingHIDDevice:
         return len(data)
 
 
+class BlockingFirstWriteDevice(RecordingHIDDevice):
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._calls = 0
+        self._lock = threading.Lock()
+
+    def write(self, data):
+        with self._lock:
+            self._calls += 1
+            call = self._calls
+            self.writes.append(bytes(data))
+        if call == 1:
+            self.entered.set()
+            self.release.wait(timeout=2)
+        return len(data)
+
+
+def wait_for(predicate, timeout=1.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
+
+
 def transport_with_recorder(output_size=1025, report_id=0):
     transport = StreamDockHID()
     recorder = RecordingHIDDevice()
@@ -363,6 +392,45 @@ def test_hid_output_report_framing():
     else:
         raise AssertionError("oversized command payload was accepted")
     check(recorder.writes == [], "oversized payload fails before HID write")
+
+
+def test_heartbeat_priority_preserves_image_transactions():
+    print("heartbeat transaction priority:")
+    transport = StreamDockHID()
+    recorder = BlockingFirstWriteDevice()
+    transport._device = recorder
+    transport._is_open = True
+    transport.set_report_config(513, 1025, 0, 0)
+
+    first = threading.Thread(target=transport.set_key_image, args=(b"A" * 1025, 1))
+    second = threading.Thread(target=transport.set_key_image, args=(b"B", 2))
+    heartbeat = threading.Thread(target=transport.heartbeat)
+    started = []
+
+    try:
+        first.start()
+        started.append(first)
+        check(recorder.entered.wait(timeout=1), "first image owns the output transaction")
+        second.start()
+        started.append(second)
+        check(wait_for(lambda: getattr(transport, "_normal_waiters", 0) == 1), "second image is queued")
+        heartbeat.start()
+        started.append(heartbeat)
+        check(wait_for(lambda: getattr(transport, "_priority_waiters", 0) == 1), "heartbeat is queued with priority")
+    finally:
+        recorder.release.set()
+        for thread in started:
+            thread.join(timeout=1)
+
+    for thread in started:
+        check(not thread.is_alive(), "queued output thread completed")
+
+    payloads = [report[1:] for report in recorder.writes]
+    check(payloads[0].startswith(b"CRT\x00\x00BAT"), "first BAT header is first")
+    check(payloads[1] == b"A" * 1024, "first image full chunk stays after its header")
+    check(payloads[2][:1] == b"A", "first image final chunk stays in its transaction")
+    check(payloads[3].startswith(b"CRT\x00\x00CONNECT"), "waiting heartbeat runs after the active image")
+    check(payloads[4].startswith(b"CRT\x00\x00BAT"), "queued image runs after the heartbeat")
 
 
 def test_write_stall_detection():
@@ -418,6 +486,7 @@ def main():
         test_display_reinit_preserves_input_transport,
         test_refresh_worker_lifecycle,
         test_hid_output_report_framing,
+        test_heartbeat_priority_preserves_image_transactions,
         test_write_stall_detection,
         test_vendor_ids_and_enumerate,
     ]
