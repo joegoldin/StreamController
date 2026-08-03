@@ -22,6 +22,7 @@ from .protocol import StreamDockHID
 from .models import StreamDockModel, MODELS, PRODUCTS
 
 _CELL_ROT = {90: Image.Transpose.ROTATE_90, 180: Image.Transpose.ROTATE_180, 270: Image.Transpose.ROTATE_270}
+JPEG_QUALITY = 100
 
 
 @dataclass
@@ -148,7 +149,9 @@ class StreamDockDevice:
     @staticmethod
     def _black_jpeg(size) -> bytes:
         buf = io.BytesIO()
-        Image.new("RGB", tuple(size), (0, 0, 0)).save(buf, format="JPEG", quality=85)
+        Image.new("RGB", tuple(size), (0, 0, 0)).save(
+            buf, format="JPEG", quality=JPEG_QUALITY
+        )
         return buf.getvalue()
 
     def _frame_key_image(self, grid_index: int, jpeg_bytes: bytes) -> bytes:
@@ -177,7 +180,7 @@ class StreamDockDevice:
         if rot is not None:
             canvas = canvas.transpose(rot)
         buf = io.BytesIO()
-        canvas.save(buf, format="JPEG", quality=90)
+        canvas.save(buf, format="JPEG", quality=JPEG_QUALITY)
         return buf.getvalue()
 
     def clear_key(self, grid_index: int):

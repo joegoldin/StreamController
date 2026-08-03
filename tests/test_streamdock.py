@@ -9,9 +9,12 @@ HID transport, so no hardware is required.
 Run from the repo root:  python3 tests/test_streamdock.py
 """
 
+import io
 import os
 import sys
 import threading
+
+from PIL import Image
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -212,7 +215,6 @@ def test_layouts():
 
 def test_end_to_end_image_pipeline():
     print("end-to-end image pipeline (BetterDeck + PILHelper):")
-    from PIL import Image
     from StreamDeck.ImageHelpers import PILHelper
     from src.backend.DeckManagement.BetterDeck import BetterDeck
 
@@ -229,9 +231,33 @@ def test_end_to_end_image_pipeline():
     check(len(sent) == 1, "BetterDeck key 0 -> hardware key 11")
     check(sent[0] == bytes(native), "exact JPEG bytes forwarded unchanged")
 
-    import io
     decoded = Image.open(io.BytesIO(sent[0]))
     check(decoded.size == (112, 112), f"sent JPEG decodes to 112x112 (got {decoded.size})")
+
+
+def jpeg_bytes(size, color=(10, 20, 30)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="JPEG", quality=100)
+    return buf.getvalue()
+
+
+def check_quality_100(jpeg, label):
+    quantization = Image.open(io.BytesIO(jpeg)).quantization
+    check(bool(quantization), f"{label}: JPEG has quantization tables")
+    check(
+        all(value == 1 for table in quantization.values() for value in table),
+        f"{label}: JPEG uses quality 100 quantization",
+    )
+
+
+def test_generated_jpeg_quality():
+    print("generated JPEG quality:")
+    check_quality_100(StreamDockDevice._black_jpeg((112, 112)), "panel clear")
+
+    model = MODELS["StreamDockN3"]
+    device = StreamDockDevice(b"/dev/hidraw_test", 0x6603, 0x1003, "TEST123", model)
+    framed = device._frame_key_image(0, jpeg_bytes(model.key_image_size))
+    check_quality_100(framed, "N3 framed key")
 
 
 def test_display_reinit_preserves_input_transport():
@@ -328,6 +354,7 @@ def main():
         test_brightness,
         test_layouts,
         test_end_to_end_image_pipeline,
+        test_generated_jpeg_quality,
         test_display_reinit_preserves_input_transport,
         test_refresh_worker_lifecycle,
         test_write_stall_detection,
