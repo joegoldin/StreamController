@@ -305,6 +305,66 @@ def test_refresh_worker_lifecycle():
     check(not deck._refresh_thread.is_alive(), "refresh thread stopped after close()")
 
 
+class RecordingHIDDevice:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, data):
+        self.writes.append(bytes(data))
+        return len(data)
+
+
+def transport_with_recorder(output_size=1025, report_id=0):
+    transport = StreamDockHID()
+    recorder = RecordingHIDDevice()
+    transport._device = recorder
+    transport._is_open = True
+    transport.set_report_config(513, output_size, 0, report_id)
+    return transport, recorder
+
+
+def test_hid_output_report_framing():
+    print("HID output report framing:")
+
+    transport, recorder = transport_with_recorder()
+    transport.heartbeat()
+    report = recorder.writes[0]
+    check(len(report) == 1025, "v3 command includes report ID plus 1024-byte payload")
+    check(report[0] == 0, "unnumbered command uses report ID zero")
+    check(report[1:13] == b"CRT\x00\x00CONNECT", "command starts after report ID")
+
+    legacy, legacy_recorder = transport_with_recorder(output_size=513)
+    legacy.heartbeat()
+    check(len(legacy_recorder.writes[0]) == 513, "legacy command uses 512-byte payload")
+
+    numbered, numbered_recorder = transport_with_recorder(report_id=4)
+    numbered.heartbeat()
+    check(numbered_recorder.writes[0][0] == 4, "configured nonzero report ID is preserved")
+
+    transport, recorder = transport_with_recorder()
+    transport.set_key_image(b"\x00AB", 1)
+    bulk = recorder.writes[1]
+    check(len(bulk) == 1025, "short bulk report has exact HIDAPI length")
+    check(bulk[1:4] == b"\x00AB", "zero-leading bulk data is not consumed as report ID")
+    check(set(bulk[4:]) == {0}, "short bulk report is zero padded")
+
+    transport, recorder = transport_with_recorder()
+    transport.set_key_image(b"A" * 1025, 1)
+    check(len(recorder.writes) == 3, "1025-byte image uses a BAT header and two chunks")
+    check(all(len(report) == 1025 for report in recorder.writes), "every image report has exact HIDAPI length")
+    check(recorder.writes[1][1:] == b"A" * 1024, "full bulk chunk is unchanged")
+    check(recorder.writes[2][1:2] == b"A", "final bulk byte is preserved")
+
+    transport, recorder = transport_with_recorder(output_size=513)
+    try:
+        transport._crt("X" * 508)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("oversized command payload was accepted")
+    check(recorder.writes == [], "oversized payload fails before HID write")
+
+
 def test_write_stall_detection():
     print("write stall detection:")
 
@@ -357,6 +417,7 @@ def main():
         test_generated_jpeg_quality,
         test_display_reinit_preserves_input_transport,
         test_refresh_worker_lifecycle,
+        test_hid_output_report_framing,
         test_write_stall_detection,
         test_vendor_ids_and_enumerate,
     ]
