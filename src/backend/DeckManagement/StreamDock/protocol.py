@@ -45,7 +45,10 @@ class StreamDockHID:
         self._input_report_size = 0
         self._output_report_size = 0
         self._feature_report_size = 0
-        self._write_lock = threading.RLock()
+        self._write_condition = threading.Condition()
+        self._write_active = False
+        self._normal_waiters = 0
+        self._priority_waiters = 0
         self._write_started_at: Optional[float] = None
 
     # ------------------------------------------------------------------ #
@@ -115,23 +118,52 @@ class StreamDockHID:
             )
         return bytes([self._report_id]) + payload.ljust(size, b"\x00")
 
-    def _crt(self, cmd: str, params: bytes = b"", bulk: bytes = b"", crt: bytes = b"CRT\x00\x00"):
+    def _acquire_write(self, priority: bool):
+        with self._write_condition:
+            if priority:
+                self._priority_waiters += 1
+            else:
+                self._normal_waiters += 1
+            try:
+                while self._write_active or (not priority and self._priority_waiters):
+                    self._write_condition.wait()
+                self._write_active = True
+            finally:
+                if priority:
+                    self._priority_waiters -= 1
+                else:
+                    self._normal_waiters -= 1
+
+    def _release_write(self):
+        with self._write_condition:
+            self._write_active = False
+            self._write_condition.notify_all()
+
+    def _crt(
+        self,
+        cmd: str,
+        params: bytes = b"",
+        bulk: bytes = b"",
+        crt: bytes = b"CRT\x00\x00",
+        priority: bool = False,
+    ):
         """Send a CRT command, optionally followed by a streamed bulk payload."""
-        with self._write_lock:
+        self._acquire_write(priority)
+        try:
             if self._device is None:
                 return
             self._write_started_at = time.monotonic()
-            try:
-                pkt = crt + cmd.encode("ascii") + params
-                self._device.write(self._encode_report(pkt))
+            pkt = crt + cmd.encode("ascii") + params
+            self._device.write(self._encode_report(pkt))
 
-                if bulk:
-                    size = self._report_size
-                    for i in range(0, len(bulk), size):
-                        chunk = bulk[i:i + size]
-                        self._device.write(self._encode_report(chunk))
-            finally:
-                self._write_started_at = None
+            if bulk:
+                size = self._report_size
+                for i in range(0, len(bulk), size):
+                    chunk = bulk[i:i + size]
+                    self._device.write(self._encode_report(chunk))
+        finally:
+            self._write_started_at = None
+            self._release_write()
 
     def write_stalled(self, threshold: float) -> bool:
         """Return whether the active HID write has exceeded ``threshold`` seconds.
@@ -203,7 +235,7 @@ class StreamDockHID:
         self._crt("HAN")
 
     def heartbeat(self):
-        self._crt("CONNECT")
+        self._crt("CONNECT", priority=True)
 
     def notify_disconnected(self):
         self._crt("CLE\x00\x00DC")
