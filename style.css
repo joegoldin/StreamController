@@ -87,13 +87,19 @@
 }
 .key-button{
   border-radius: 10px;
-  min-width:75px;	
+  min-width:75px;
 	min-height:75px;
   padding-left: 0px;
   padding-right: 0px;
   padding-top: 0px;
   padding-bottom: 0px;
   background-color: #363636;
+}
+.key-screenless{
+  min-width: 37px;
+  min-height: 37px;
+  border-radius: 9999px;
+  background-color: #2a2a2a;
 }
 .key-button-frame-hidden {
   border-radius:15px;
@@ -378,6 +384,11 @@
   padding-bottom: 0px;
   background-color: #363636;
   border-radius: 50px;
+}
+.dial-large {
+  min-width: 105px;
+  min-height: 105px;
+  border-radius: 99999px;
 }
 .dial-frame {
   border-radius:99999px;

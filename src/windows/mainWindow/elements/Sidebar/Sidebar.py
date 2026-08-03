@@ -293,11 +293,29 @@ class KeyEditor(Gtk.Box):
 
         self.remove_state_button.set_visible(self.state_switcher.get_n_states() > 1)
 
-        self.icon_selector.load_for_identifier(identifier, state)
-        self.image_editor.load_for_identifier(identifier, state)
-        self.label_editor.load_for_identifier(identifier, state)
+        # Screenless buttons (e.g. the StreamDock N3's bottom row) have no
+        # display, so only offer action binding -- hide the icon/image/label/
+        # background editors for them.
+        is_screenless = False
+        if isinstance(identifier, Input.Key):
+            getter = getattr(controller.deck, "screenless_key_indices", None)
+            if callable(getter):
+                try:
+                    is_screenless = controller.coords_to_index(identifier.coords) in getter()
+                except Exception:
+                    is_screenless = False
+
+        self.icon_selector.set_visible(not is_screenless)
+        self.image_editor.set_visible(not is_screenless)
+        self.label_editor.set_visible(not is_screenless)
+        self.background_editor.set_visible(not is_screenless)
+
+        if not is_screenless:
+            self.icon_selector.load_for_identifier(identifier, state)
+            self.image_editor.load_for_identifier(identifier, state)
+            self.label_editor.load_for_identifier(identifier, state)
+            self.background_editor.load_for_identifier(identifier, state)
         self.action_editor.load_for_identifier(identifier, state)
-        self.background_editor.load_for_identifier(identifier, state)
 
 class PageEditor(Gtk.Box):
     def __init__(self, **kwargs):

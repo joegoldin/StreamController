@@ -1,0 +1,439 @@
+"""
+StreamDock device runtime.
+
+Ties a :class:`StreamDockHID` transport to a :class:`StreamDockModel` and
+provides the high-level operations StreamController needs: open/close, image
+and brightness control, and an input reader thread that decodes HID reports
+into structured :class:`StreamDockInput` events.
+"""
+
+import fcntl
+import io
+import os
+import time
+import threading
+from dataclasses import dataclass
+from typing import Optional, Callable, List
+
+from loguru import logger as log
+from PIL import Image
+
+from .protocol import StreamDockHID
+from .models import StreamDockModel, MODELS, PRODUCTS
+
+_CELL_ROT = {90: Image.Transpose.ROTATE_90, 180: Image.Transpose.ROTATE_180, 270: Image.Transpose.ROTATE_270}
+JPEG_QUALITY = 100
+
+
+@dataclass
+class StreamDockInput:
+    """A decoded input event.
+
+    type:
+      * ``"key"``        -- a grid key; ``index`` = grid index, ``pressed`` set
+      * ``"dial_press"`` -- a knob press; ``index`` = dial index, ``pressed`` set
+      * ``"dial_turn"``  -- a knob turn; ``index`` = dial index, ``direction`` = +1 CW / -1 CCW
+      * ``"swipe"``      -- a touch swipe; ``direction`` = +1 right / -1 left
+    """
+    type: str
+    index: int = 0
+    pressed: bool = False
+    direction: int = 0
+
+
+class StreamDockDevice:
+    """A single attached StreamDock, addressed by its model's data tables."""
+
+    # CONNECT keep-alive cadence. The firmware treats a quiet host as gone and
+    # falls back to its onboard behaviour (community reverse engineering says
+    # within a few seconds), so poll well under that.
+    HEARTBEAT_INTERVAL = 2.0  # seconds
+    # A normal CRT command/image transfer completes far below this. If it does
+    # not, the HID output path is wedged even though the independent input path
+    # may still deliver button reports.
+    WRITE_STALL_THRESHOLD = 5.0  # seconds
+    # Settle time after a USB port reset before reopening the HID interface.
+    RESET_SETTLE = 2.0  # seconds
+
+    def __init__(self, path, vendor_id: int, product_id: int, serial_number: str, model: StreamDockModel):
+        self.path = path
+        self.vendor_id = int(vendor_id or 0)
+        self.product_id = int(product_id or 0)
+        self.serial_number = serial_number or ""
+        self.model = model
+
+        self.hid = StreamDockHID()
+        self.firmware_version = ""
+
+        # callback(device, StreamDockInput); fired from the reader thread.
+        self.input_callback: Optional[Callable] = None
+
+        self._run = False
+        self._disconnected = False
+        self._read_thread: Optional[threading.Thread] = None
+        self._heartbeat_thread: Optional[threading.Thread] = None
+
+        # Last JPEG sent per hardware key + last brightness, so the panel can be
+        # repainted after resume-from-suspend without a controller re-render.
+        self._last_images: dict = {}
+        self._last_brightness: int = 100
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle
+    # ------------------------------------------------------------------ #
+    def open(self) -> bool:
+        if not self.hid.open(self.path):
+            return False
+        self._disconnected = False
+        m = self.model
+        self.hid.set_report_config(m.report_input, m.report_output, m.report_feature, m.report_id)
+        # Run the same display init used on resume, so launching also un-freezes a
+        # panel left stuck by a prior suspend. (No images are cached yet on a fresh
+        # open, so this just wakes + clears the panel before StreamController draws.)
+        self._init_display()
+        self.firmware_version = self.hid.get_firmware_version()
+
+        self._run = True
+        self._read_thread = threading.Thread(target=self._read_loop, name=f"StreamDockRead-{self.serial_number}", daemon=True)
+        self._read_thread.start()
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name=f"StreamDockHB-{self.serial_number}", daemon=True)
+        self._heartbeat_thread.start()
+        return True
+
+    def close(self):
+        self._run = False
+        for t in (self._read_thread, self._heartbeat_thread):
+            if t is not None and t.is_alive():
+                try:
+                    t.join(timeout=1.0)
+                except RuntimeError:
+                    pass
+        # NOTE: deliberately do NOT send notify_disconnected ("CLE..DC") here.
+        # On the N3 (and likely the rest of the family) that command latches the
+        # panel into a "host disconnected" state in which it ignores ALL display
+        # writes until a physical USB replug -- input reports still come through.
+        # That made StreamController restarts look half-dead: the deck responded
+        # to button/dial presses but never redrew (and key changes did nothing).
+        # Just releasing the HID handle leaves the panel writable, so the next
+        # open() re-initialises and redraws normally.
+        self.hid.close()
+
+    @property
+    def is_open(self) -> bool:
+        return self.hid.is_open
+
+    def connected(self) -> bool:
+        """True while this device's USB path is still enumerable."""
+        if self._disconnected:
+            return False
+        try:
+            for info in StreamDockHID.enumerate(self.vendor_id, self.product_id):
+                if info.get("path") == self.path:
+                    return True
+            return False
+        except Exception:
+            return True
+
+    # ------------------------------------------------------------------ #
+    # Output
+    # ------------------------------------------------------------------ #
+    def set_key_image(self, grid_index: int, jpeg_bytes: bytes):
+        hw = self.model.image_key_map.get(grid_index)
+        if hw is None:
+            return
+        if getattr(self.model, "cell_size", ()):
+            jpeg_bytes = self._frame_key_image(grid_index, jpeg_bytes)
+        self._last_images[hw] = jpeg_bytes
+        self.hid.set_key_image(jpeg_bytes, hw)
+
+    @staticmethod
+    def _black_jpeg(size) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", tuple(size), (0, 0, 0)).save(
+            buf, format="JPEG", quality=JPEG_QUALITY
+        )
+        return buf.getvalue()
+
+    def _frame_key_image(self, grid_index: int, jpeg_bytes: bytes) -> bytes:
+        """Paste the rendered key image into the device's tiling cell at a
+        per-(col,row) offset and rotate, so each icon lands in its off-centre
+        bezel cutout (single-screen panels like the N3)."""
+        m = self.model
+        try:
+            content = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+        except Exception as e:
+            log.error(f"StreamDock frame decode failed: {e}")
+            return jpeg_bytes
+        if getattr(m, "icon_size", ()):
+            content = content.resize(tuple(m.icon_size))
+        col = grid_index % m.cols
+        row = grid_index // m.cols
+        cx = m.col_x_offsets[col] if col < len(m.col_x_offsets) else 0
+        cy = m.row_y_offsets[row] if row < len(m.row_y_offsets) else 0
+        canvas = Image.new("RGB", tuple(m.cell_size), (0, 0, 0))
+        # centre the (possibly scaled-down) content in the cell, then apply the
+        # per-key offset so it lands centred in its bezel cutout
+        px = cx + (canvas.width - content.width) // 2
+        py = cy + (canvas.height - content.height) // 2
+        canvas.paste(content, (px, py))
+        rot = _CELL_ROT.get(m.cell_rotation % 360)
+        if rot is not None:
+            canvas = canvas.transpose(rot)
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=JPEG_QUALITY)
+        return buf.getvalue()
+
+    def clear_key(self, grid_index: int):
+        hw = self.model.image_key_map.get(grid_index)
+        if hw is not None:
+            self._last_images.pop(hw, None)
+            self.hid.clear_key(hw)
+
+    def clear_all(self):
+        self._last_images.clear()
+        self.hid.clear_all_keys()
+
+    def set_brightness(self, percent: int):
+        self._last_brightness = percent
+        self.hid.set_key_brightness(percent)
+
+    def refresh(self):
+        self.hid.refresh_screen()
+
+    def _init_display(self):
+        """Wake the panel, clear it black, and (re)push every cached key image.
+
+        Shared by :meth:`open` (fresh launch -- no cached images yet, so it just
+        wakes and clears the panel) and :meth:`reinit_panel` (resume-from-suspend
+        -- repaints the keys we'd drawn). The full-screen black fill paints over
+        every LCD key (covering the gaps around the bezel cutouts) so no old or
+        factory content shows through; CLE alone doesn't visibly wipe some panels.
+        """
+        m = self.model
+        # Official connect handshake: MOD=software first, then DIS + LIG. The
+        # firmware only honours host-drawn images in software mode, and after a
+        # latch (suspend / DC) the post-reset reopen needs this exact sequence.
+        self.hid.set_mode(StreamDockHID.MODE_SOFTWARE)
+        time.sleep(0.05)
+        self.hid.wakeup_screen()
+        self.hid.set_key_brightness(self._last_brightness)
+        self.hid.clear_all_keys()
+        fill = getattr(m, "screen_clear_size", ())
+        if fill:
+            blk = self._black_jpeg(fill)
+            for hw in sorted(set(m.image_key_map.values())):
+                self.hid.set_key_image(blk, hw)
+        for hw, jpeg in list(self._last_images.items()):
+            self.hid.set_key_image(jpeg, hw)
+        self.hid.refresh_screen()
+
+    def reinit_display(self) -> bool:
+        """Reinitialize and repaint the display on the current HID transport."""
+        if not self.is_open:
+            return False
+        try:
+            self._init_display()
+            return True
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} display re-init failed: {e}")
+            return False
+
+    def sleep_panel(self):
+        """Turn the panel truly off (HAN). Reversed by the DIS in open()/
+        reinit_panel(). This is an explicit low-level operation and is not used
+        for automatic lock handling: some N3 firmware latches after HAN and
+        ignores later display writes until physically replugged."""
+        try:
+            self.hid.sleep_screen()
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} sleep_panel failed: {e}")
+
+    def reinit_panel(self) -> bool:
+        """Fully recover the panel: close, USB port reset, reopen, repaint.
+
+        This is best-effort suspend/disconnect recovery. Some N3 firmware states
+        ACK display writes while rendering none of them; a logical USB reset and
+        fresh MOD/DIS/LIG handshake can recover some transport disruptions but
+        cannot reliably clear a latch caused by HAN. Automatic lock handling
+        therefore never sends HAN. Falls back to a plain reopen where the USB
+        node isn't resettable (e.g. sandboxed without /dev/bus/usb).
+        """
+        try:
+            if self.is_open:
+                self.close()
+            if self._usbdevfs_reset():
+                time.sleep(self.RESET_SETTLE)  # hid interface re-binds
+                self._refresh_path()
+            if self.open():
+                return True
+            log.error(f"StreamDock {self.serial_number}: reopen after reset failed")
+        except Exception as e:
+            log.error(f"StreamDock {self.serial_number} panel re-init failed: {e}")
+        return False
+
+    def _usb_device_node(self) -> Optional[str]:
+        """Resolve this device's usbfs node (/dev/bus/usb/BBB/DDD) via sysfs."""
+        base = "/sys/bus/usb/devices"
+        try:
+            for name in os.listdir(base):
+                d = os.path.join(base, name)
+                try:
+                    with open(os.path.join(d, "idVendor")) as f:
+                        vid = int(f.read().strip(), 16)
+                    with open(os.path.join(d, "idProduct")) as f:
+                        pid = int(f.read().strip(), 16)
+                except (OSError, ValueError):
+                    continue
+                if vid != self.vendor_id or pid != self.product_id:
+                    continue
+                try:
+                    with open(os.path.join(d, "serial")) as f:
+                        serial = f.read().strip()
+                except OSError:
+                    serial = ""
+                if self.serial_number and serial and serial != self.serial_number:
+                    continue
+                with open(os.path.join(d, "busnum")) as f:
+                    bus = int(f.read())
+                with open(os.path.join(d, "devnum")) as f:
+                    dev = int(f.read())
+                return f"/dev/bus/usb/{bus:03d}/{dev:03d}"
+        except OSError:
+            pass
+        return None
+
+    def _usbdevfs_reset(self) -> bool:
+        """Issue USBDEVFS_RESET on the device -- a logical re-plug. Needs rw on
+        the usbfs node (granted by the uaccess udev rules)."""
+        node = self._usb_device_node()
+        if node is None:
+            log.warning(f"StreamDock {self.serial_number}: usb node not found; skipping reset")
+            return False
+        try:
+            with open(node, "wb") as f:
+                fcntl.ioctl(f, 0x5514, 0)  # USBDEVFS_RESET = _IO('U', 20)
+            log.info(f"StreamDock {self.serial_number}: USB reset issued on {node}")
+            return True
+        except Exception as e:
+            log.warning(f"StreamDock {self.serial_number}: USB reset unavailable ({e}); plain reopen")
+            return False
+
+    def _refresh_path(self):
+        """Re-resolve the HID path after a reset (the hidraw node can move)."""
+        try:
+            for info in StreamDockHID.enumerate(self.vendor_id, self.product_id):
+                serial = info.get("serial_number") or ""
+                if not self.serial_number or not serial or serial == self.serial_number:
+                    self.path = info.get("path", self.path)
+                    return
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    # Input
+    # ------------------------------------------------------------------ #
+    def _decode(self, code: int, state: int) -> Optional[StreamDockInput]:
+        m = self.model
+        if code in m.button_map:
+            return StreamDockInput("key", index=m.button_map[code], pressed=(state == 0x01))
+        if code in m.knob_rotate_map:
+            dial, direction = m.knob_rotate_map[code]
+            return StreamDockInput("dial_turn", index=dial, direction=direction)
+        if code in m.knob_press_map:
+            return StreamDockInput("dial_press", index=m.knob_press_map[code], pressed=(state == 0x01))
+        if code in m.swipe_map:
+            return StreamDockInput("swipe", direction=m.swipe_map[code])
+        return None
+
+    def _handle_report(self, arr) -> Optional[StreamDockInput]:
+        """Parse one raw input report and dispatch it. Returns the event (or None)."""
+        offset = self.model.code_offset
+        if not arr or len(arr) < offset + 2:
+            return None
+        if arr[9] == 0xFF:
+            # Write acknowledgement, not an input event.
+            return None
+        event = self._decode(arr[offset], arr[offset + 1])
+        if event is not None and self.input_callback is not None:
+            self.input_callback(self, event)
+        return event
+
+    def _read_loop(self):
+        errors = 0
+        write_stall_reported = False
+        write_stalled = getattr(self.hid, "write_stalled", lambda _threshold: False)
+        while self._run:
+            try:
+                arr = self.hid.read(timeout_ms=100)
+                errors = 0
+            except Exception as e:
+                if not self._run:
+                    break
+                errors += 1
+                if errors == 1:
+                    log.error(f"StreamDock read error (device disconnected?): {e}")
+                # A few consecutive read errors means the device is gone. Stop the
+                # reader (and heartbeat) and mark it disconnected instead of
+                # spinning/spamming forever -- connected() then reports False so
+                # the deck manager removes it; it re-adds on replug.
+                if errors >= 3:
+                    self._disconnected = True
+                    self._run = False
+                    log.info(f"StreamDock {self.serial_number} disconnected; reader stopped.")
+                    break
+                time.sleep(0.1)
+                continue
+            stalled = write_stalled(self.WRITE_STALL_THRESHOLD)
+            if stalled and not write_stall_reported:
+                log.error(
+                    f"StreamDock {self.serial_number} HID write blocked for at least "
+                    f"{self.WRITE_STALL_THRESHOLD:.0f}s; display output and keepalive are stalled"
+                )
+                write_stall_reported = True
+            elif not stalled:
+                write_stall_reported = False
+            # None is a benign read timeout (already throttled by timeout_ms).
+            if arr is None:
+                continue
+            try:
+                self._handle_report(arr)
+            except Exception as e:
+                log.error(f"StreamDock report handling error: {e}")
+
+    def _heartbeat_loop(self):
+        time.sleep(1.0)  # let the reader settle first
+        while self._run:
+            try:
+                self.hid.heartbeat()
+            except Exception as e:
+                log.error(f"StreamDock heartbeat error: {e}")
+            # Sleep in small slices so close() stays responsive.
+            waited = 0.0
+            while self._run and waited < self.HEARTBEAT_INTERVAL:
+                time.sleep(0.1)
+                waited += 0.1
+
+
+def enumerate_stream_dock_devices() -> List[StreamDockDevice]:
+    """Return an (unopened) :class:`StreamDockDevice` for every attached StreamDock."""
+    devices = []
+    seen_paths = set()
+    for (vid, pid), key in PRODUCTS.items():
+        try:
+            infos = StreamDockHID.enumerate(vid, pid)
+        except Exception as e:
+            log.error(f"StreamDock enumeration failed for {vid:04x}:{pid:04x}: {e}")
+            continue
+        for info in infos:
+            path = info.get("path")
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            devices.append(StreamDockDevice(
+                path,
+                info.get("vendor_id", vid),
+                info.get("product_id", pid),
+                info.get("serial_number", "") or "",
+                MODELS[key],
+            ))
+    return devices

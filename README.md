@@ -29,6 +29,23 @@ StreamController supports the following Elgato Stream Deck models:
 - Stream Deck Neo (only the normal buttons)
 - Stream Deck Modules
 
+### MiraBox StreamDock (Stream Deck clones)
+
+StreamController also supports MiraBox StreamDock devices with a self-contained,
+pure-Python implementation of their reverse-engineered HID protocol
+(`src/backend/DeckManagement/StreamDock`) — no closed-source vendor libraries
+and no extra dependencies beyond `hidapi`:
+
+- StreamDock 293 / 293 V3 / 293s / 293s V3 (15 keys)
+- StreamDock N4 / N4 Pro (keys + knobs)
+- StreamDock M3 (15 keys + 3 knobs) / M18 (15 keys)
+- StreamDock N3 (6 keys + 3 knobs) / N1 (15 keys + knob)
+- StreamDock XL (32 keys + 2 knobs)
+- StreamDock K1 Pro (6 keys + 3 knobs)
+
+The primary key grid and rotary knobs are supported; secondary LCD strips and
+the SD+-style touch strip are not yet mapped.
+
 ## Features
 
 ### Plugins

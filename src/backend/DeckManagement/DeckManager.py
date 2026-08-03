@@ -35,6 +35,10 @@ from src.backend.PageManagement.PageManagerBackend import PageManagerBackend
 from src.backend.SettingsManager import SettingsManager
 from src.backend.DeckManagement.HelperMethods import get_sys_param_value, recursive_hasattr
 from src.backend.DeckManagement.Subclasses.FakeDeck import FakeDeck
+from src.backend.DeckManagement.StreamDockDeck import (
+    enumerate_stream_dock_decks,
+    STREAMDOCK_VENDOR_ID_STRINGS,
+)
 
 from src.backend.DeckManagement.beta_resume import _read as beta_read
 
@@ -81,6 +85,16 @@ class DeckManager:
         if not self.beta_resume_mode:
             resume_thread.start()
 
+        # A deck that re-enumerates on resume from suspend is missed by usbmonitor
+        # -- it doesn't receive the udev connect/disconnect uevents fired during
+        # the suspend/resume transition -- so on_connect never runs and the deck
+        # would sit dead (this bites StreamDock panels with power/persist=0, which
+        # re-enumerate on resume). Reconnect them explicitly on a boottime-detected
+        # resume. Runs regardless of beta_resume_mode; it only touches decks that
+        # report disconnected, so live decks are untouched.
+        self.stream_dock_resume_thread = StreamDockResumeThread(self)
+        self.stream_dock_resume_thread.start()
+
         self.remote_deck_manager = RemoteDeckManager(self)
         if gl.settings_manager.get_app_settings().get("dev", {}).get("n-remote-decks", 0) > 0:
             self.load_remote_decks()
@@ -121,7 +135,10 @@ class DeckManager:
     def load_hardware_decks(self):
         if gl.IS_MAC:
             return
-        decks=DeviceManager().enumerate()
+        decks = list(DeviceManager().enumerate())
+        # MiraBox StreamDock devices (Stream Deck clones) speak their own HID
+        # protocol; they are wrapped to look like a StreamDeck device.
+        decks.extend(enumerate_stream_dock_decks())
         for deck in decks:
             try:
                 if not deck.is_open():
@@ -178,20 +195,40 @@ class DeckManager:
 
     def on_connect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} connected")
-        # Check if it is a supported device
-        if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
+        # Check if it is a supported device (Elgato Stream Deck or MiraBox StreamDock)
+        vendor_id = device_info["ID_VENDOR_ID"]
+        if vendor_id != ELGATO_VENDOR_ID and vendor_id not in STREAMDOCK_VENDOR_ID_STRINGS:
             return
 
         GLib.idle_add(self.connect_new_decks)
 
     def connect_new_decks(self):
-        # Get already loaded deck serial ids
+        # A fast USB reset/replug can reuse the same hidraw path while
+        # usbmonitor delivers only the new connect event. Drop the dead
+        # controller before comparing ids, otherwise the replacement deck is
+        # mistaken for the already-loaded one and never added back.
+        self._remove_disconnected_decks()
+
+        # Snapshot recovery before reading ids: recovery may change a HID path
+        # and release ownership between the two calls.
         loaded_deck_ids = []
+        recovering_deck_identities = set()
         for controller in self.deck_controller:
+            reinitializing = getattr(controller.deck, "reinitializing", None)
+            if callable(reinitializing) and reinitializing():
+                identity = self._deck_identity(controller.deck)
+                if identity is not None:
+                    recovering_deck_identities.add(identity)
             loaded_deck_ids.append(controller.deck.id())
 
-        for deck in DeviceManager().enumerate():
+        for deck in list(DeviceManager().enumerate()) + enumerate_stream_dock_decks():
             if deck.id() in loaded_deck_ids:
+                continue
+            if (
+                recovering_deck_identities
+                and self._deck_identity(deck) in recovering_deck_identities
+            ):
+                log.info(f"Ignoring duplicate enumeration of recovering deck: {deck.id()}")
                 continue
             # Add deck
             self.add_newly_connected_deck(deck)
@@ -199,15 +236,43 @@ class DeckManager:
         if recursive_hasattr(gl, "app.main_win"):
             GLib.idle_add(gl.app.main_win.check_for_errors)
 
+    @staticmethod
+    def _deck_identity(deck):
+        """Return a deck's stable recovery identity when it provides one."""
+        identity = getattr(deck, "recovery_identity", None)
+        if not callable(identity):
+            return None
+        try:
+            return identity()
+        except Exception:
+            return None
+
+    def _remove_disconnected_decks(self) -> None:
+        for controller in list(self.deck_controller):
+            try:
+                reinitializing = getattr(controller.deck, "reinitializing", None)
+                if callable(reinitializing) and reinitializing():
+                    log.info(f"Preserving recovering deck during enumeration: {controller.deck.id()}")
+                    continue
+                if controller.deck.connected():
+                    continue
+                log.info(f"Removing disconnected deck before enumeration: {controller.deck.id()}")
+                try:
+                    controller.deck.close()
+                except Exception as e:
+                    log.warning(f"Failed to close disconnected deck: {e}")
+                self.remove_controller(controller)
+            except Exception as e:
+                log.error(f"Failed to reconcile disconnected deck: {e}")
+
 
     def on_disconnect(self, device_id, device_info):
         log.info(f"Device {device_id} with info: {device_info} disconnected")
-        if device_info["ID_VENDOR_ID"] != ELGATO_VENDOR_ID:
+        vendor_id = device_info["ID_VENDOR_ID"]
+        if vendor_id != ELGATO_VENDOR_ID and vendor_id not in STREAMDOCK_VENDOR_ID_STRINGS:
             return
 
-        for controller in list(self.deck_controller):
-            if not controller.deck.connected():
-                self.remove_controller(controller)
+        self._remove_disconnected_decks()
 
         if recursive_hasattr(gl, "app.main_win"):
             GLib.idle_add(gl.app.main_win.check_for_errors)
@@ -330,6 +395,67 @@ class DeckManager:
     def get_connected_serials(self) -> list[str]:
         return [controller.serial_number() for controller in self.deck_controller]
 
+    def reconnect_disconnected_decks(self):
+        """Drop any deck that reports disconnected and re-enumerate to re-add it.
+
+        Called on resume from suspend to run the reconnect that usbmonitor missed
+        (it doesn't see the uevents fired during the suspend/resume transition).
+        Live decks report ``connected() == True`` and are left alone; a deck that
+        re-enumerated on resume (e.g. a StreamDock with power/persist=0) reports
+        disconnected, so it's closed, removed, and re-added fresh by
+        ``connect_new_decks`` -- the same path a physical replug takes, which is
+        what reliably brings the panel back.
+        """
+        for controller in list(self.deck_controller):
+            try:
+                if controller.deck.connected():
+                    continue
+                # Prefer reviving the deck in place: for StreamDocks,
+                # reinit_panel USB-resets the device, reopens it with the
+                # official handshake and repaints -- clearing the firmware's
+                # post-suspend "host gone" latch without any UI churn. The
+                # recovery runs in a background thread (~3s); if the deck is
+                # still dead afterwards (e.g. truly unplugged during suspend),
+                # fall back to the remove + re-enumerate path.
+                reinit = getattr(controller.deck, "reinit_panel", None)
+                if callable(reinit):
+                    log.info(f"Resume: hard-resetting deck {controller.serial_number()}")
+                    reinit()
+                    GLib.timeout_add_seconds(10, self._drop_if_still_disconnected, controller)
+                    continue
+                log.info(f"Resume: reconnecting disconnected deck {controller.serial_number()}")
+                try:
+                    controller.deck.close()
+                except Exception:
+                    pass
+                controller.media_player.running = False
+                self.remove_controller(controller)
+            except Exception as e:
+                log.error(f"Resume reconcile error: {e}")
+        self.connect_new_decks()
+        if recursive_hasattr(gl, "app.main_win"):
+            GLib.idle_add(gl.app.main_win.check_for_errors)
+        return False  # one-shot for GLib.idle_add
+
+    def _drop_if_still_disconnected(self, controller) -> bool:
+        """Post-reset fallback: if an in-place hard reset didn't revive the deck
+        (it was actually unplugged), remove it and re-enumerate."""
+        try:
+            if controller in self.deck_controller and not controller.deck.connected():
+                log.info(f"Deck {controller.serial_number()} still disconnected after reset; removing")
+                try:
+                    controller.deck.close()
+                except Exception:
+                    pass
+                controller.media_player.running = False
+                self.remove_controller(controller)
+                self.connect_new_decks()
+                if recursive_hasattr(gl, "app.main_win"):
+                    GLib.idle_add(gl.app.main_win.check_for_errors)
+        except Exception as e:
+            log.error(f"Post-reset reconcile error: {e}")
+        return False  # one-shot for GLib.timeout_add_seconds
+
 
 class FlatpakDeckDisconnectThread(threading.Thread):
     def __init__(self, deck_manager: DeckManager):
@@ -339,11 +465,9 @@ class FlatpakDeckDisconnectThread(threading.Thread):
     def run(self):
         while gl.threads_running:
             time.sleep(2)
-            for controller in list(self.deck_manager.deck_controller):
-                if not controller.deck.connected():
-                    self.deck_manager.remove_controller(controller)
-                    if recursive_hasattr(gl, "app.main_win"):
-                        GLib.idle_add(gl.app.main_win.check_for_errors)
+            GLib.idle_add(self.deck_manager._remove_disconnected_decks)
+            if recursive_hasattr(gl, "app.main_win"):
+                GLib.idle_add(gl.app.main_win.check_for_errors)
 
 class DetectResumeThread(threading.Thread):
     def __init__(self, deck_manager: DeckManager):
@@ -361,5 +485,42 @@ class DetectResumeThread(threading.Thread):
             self.last_2 = time.time()
             if time.time() - self.last_1 >= 5 or time.time() - self.last_2 >= 5:
                 self.deck_manager.on_resumed()
-            
+
             time.sleep(2)
+
+
+class StreamDockResumeThread(threading.Thread):
+    """Reconnect decks after resume from suspend.
+
+    usbmonitor does not receive the udev connect/disconnect events fired during
+    the suspend/resume transition, so a deck that re-enumerates on resume (e.g. a
+    StreamDock with power/persist=0) never gets on_connect and would sit dead.
+    Detect resume by watching the CLOCK_BOOTTIME/CLOCK_MONOTONIC gap -- boottime
+    counts time spent suspended, monotonic does not, so a jump means we slept
+    (NTP-immune) -- then re-run the reconnect usbmonitor missed.
+    """
+
+    RESUME_GAP = 5.0  # seconds of unaccounted wall time => a suspend happened
+
+    def __init__(self, deck_manager: DeckManager):
+        super().__init__(name="StreamDockResumeThread", daemon=True)
+        self.deck_manager = deck_manager
+
+    @staticmethod
+    def _suspend_offset() -> float:
+        try:
+            return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+        except (AttributeError, OSError):
+            return 0.0
+
+    def run(self):
+        last = self._suspend_offset()
+        while gl.threads_running:
+            time.sleep(2)
+            offset = self._suspend_offset()
+            if offset - last > self.RESUME_GAP:
+                log.info(f"Resume from suspend detected (~{offset - last:.0f}s); reconnecting decks")
+                time.sleep(2)  # let the kernel finish re-enumerating USB
+                GLib.idle_add(self.deck_manager.reconnect_disconnected_decks)
+                offset = self._suspend_offset()  # account for the settle sleep
+            last = offset

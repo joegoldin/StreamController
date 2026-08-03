@@ -137,13 +137,29 @@ class KeyButton(Gtk.Frame):
 
         self.pixbuf = None
 
-        # self.button = Gtk.Button(hexpand=True, vexpand=True, css_classes=["key-button"])
-        # self.set_child(self.button)
+        # Some decks (e.g. the StreamDock N3) expose screenless physical buttons:
+        # render those as small circles instead of full key tiles, and skip the
+        # dynamic key image (set_image) since they have no display.
+        self.is_screenless = False
+        try:
+            getter = getattr(key_grid.deck_controller.deck, "screenless_key_indices", None)
+            if callable(getter):
+                self.is_screenless = key_grid.deck_controller.coords_to_index(coords) in getter()
+        except Exception:
+            self.is_screenless = False
 
-        self.image = Gtk.Image(hexpand=True, vexpand=True, css_classes=["key-image", "key-button"])
-        self.image.set_overflow(Gtk.Overflow.HIDDEN)
-        self.image.set_size_request(75, 75)
-        self.image.set_pixel_size(75)
+        if self.is_screenless:
+            self.image = Gtk.Image(css_classes=["key-image", "key-button", "key-screenless"])
+            self.image.set_halign(Gtk.Align.CENTER)
+            self.image.set_valign(Gtk.Align.CENTER)
+            self.image.set_overflow(Gtk.Overflow.HIDDEN)
+            self.image.set_size_request(37, 37)
+            self.image.set_pixel_size(37)
+        else:
+            self.image = Gtk.Image(hexpand=True, vexpand=True, css_classes=["key-image", "key-button"])
+            self.image.set_overflow(Gtk.Overflow.HIDDEN)
+            self.image.set_size_request(75, 75)
+            self.image.set_pixel_size(75)
         self.set_child(self.image)
 
         # self.button.connect("clicked", self.on_click)
@@ -288,6 +304,9 @@ class KeyButton(Gtk.Frame):
         
 
     def set_image(self, image):
+        if getattr(self, "is_screenless", False):
+            # Screenless buttons have no display; keep them a solid circle.
+            return
         self.pixbuf = image2pixbuf(image.convert("RGBA"), force_transparency=True)
         GLib.idle_add(self.show_pixbuf, self.pixbuf, priority=GLib.PRIORITY_HIGH)
         # image.close()

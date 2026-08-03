@@ -48,25 +48,45 @@ class DialBox(Gtk.Box):
 
 
     def build(self):
-        for i in range(self.deck_controller.deck.dial_count()):
-            dial = Dial(self, Input.Dial(str(i)))
+        deck = self.deck_controller.deck
+        # Decks may flag physically larger dials (e.g. the StreamDock N3's top
+        # knob) so we can render them bigger. Decks without the hint (Elgato)
+        # keep every dial uniform.
+        large_indices = set()
+        getter = getattr(deck, "large_dial_indices", None)
+        if callable(getter):
+            try:
+                large_indices = set(getter())
+            except Exception:
+                large_indices = set()
+        # Homogeneous layout forces equal widths, which would shrink a larger
+        # dial back to the others' size -- only keep it when all dials match.
+        if large_indices:
+            self.set_homogeneous(False)
+        for i in range(deck.dial_count()):
+            dial = Dial(self, Input.Dial(str(i)), large=(i in large_indices))
             self.dials.append(dial)
             self.append(dial)
 
 
 class Dial(Gtk.Frame):
-    def __init__(self, dial_box: DialBox, identifier: Input.Dial, **kwargs):
+    def __init__(self, dial_box: DialBox, identifier: Input.Dial, large: bool = False, **kwargs):
         super().__init__(**kwargs)
 
         self.dial_box = dial_box
         self.identifier = identifier
+        self.large = large
         self.set_halign(Gtk.Align.CENTER)
+        # Centre vertically rather than fill: when the row contains a taller
+        # (large) dial, FILL would stretch the smaller dials to the row height
+        # and turn them into ovals. Centring keeps every dial square (circular).
+        self.set_valign(Gtk.Align.CENTER)
         self.set_css_classes(["dial-frame", "dial-frame-hidden"])
         self.set_overflow(Gtk.Overflow.HIDDEN)
 
         self.pixbuf = None
 
-        self.image = Gtk.Image(css_classes=["dial"])
+        self.image = Gtk.Image(css_classes=["dial", "dial-large"] if large else ["dial"])
         self.image.set_overflow(Gtk.Overflow.HIDDEN)
         self.set_child(self.image)
 

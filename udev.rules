@@ -9,3 +9,72 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0084", TAG+="uacce
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0086", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="009a", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="00a5", TAG+="uaccess"
+
+# MiraBox StreamDock devices (Stream Deck clones).
+# udev rules do not support inline comments, so each device model is noted on
+# its own comment line above the matching rule.
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1500", ATTRS{idProduct}=="3001", TAG+="uaccess"
+# StreamDock 293
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5500", ATTRS{idProduct}=="1001", TAG+="uaccess"
+# StreamDock N4 Pro
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1008", TAG+="uaccess"
+# StreamDock M3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1020", TAG+="uaccess"
+# StreamDock N4 Pro
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1021", TAG+="uaccess"
+# StreamDock N4 Pro
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1023", TAG+="uaccess"
+# StreamDock XL
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1028", TAG+="uaccess"
+# StreamDock XL
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="1031", TAG+="uaccess"
+# StreamDock 293s
+SUBSYSTEM=="usb", ATTRS{idVendor}=="5548", ATTRS{idProduct}=="6670", TAG+="uaccess"
+# StreamDock N4
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6602", ATTRS{idProduct}=="1001", TAG+="uaccess"
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6602", ATTRS{idProduct}=="1002", TAG+="uaccess"
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6602", ATTRS{idProduct}=="1003", TAG+="uaccess"
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6602", ATTRS{idProduct}=="2929", TAG+="uaccess"
+# StreamDock N1
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1000", TAG+="uaccess"
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1002", TAG+="uaccess"
+# StreamDock N3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1003", TAG+="uaccess"
+# StreamDock 293 V3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1005", TAG+="uaccess"
+# StreamDock 293 V3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1006", TAG+="uaccess"
+# StreamDock N4
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1007", TAG+="uaccess"
+# StreamDock M18
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1009", TAG+="uaccess"
+# StreamDock 293 V3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1010", TAG+="uaccess"
+# StreamDock N1
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1011", TAG+="uaccess"
+# StreamDock M18
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1012", TAG+="uaccess"
+# StreamDock 293s V3
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1014", TAG+="uaccess"
+# StreamDock K1 Pro
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1015", TAG+="uaccess"
+# StreamDock K1 Pro
+SUBSYSTEM=="usb", ATTRS{idVendor}=="6603", ATTRS{idProduct}=="1019", TAG+="uaccess"
+
+# Force a clean re-enumeration of StreamDock panels on resume from suspend.
+# These panels wedge their display across a host sleep; re-enumerating (rather
+# than the kernel silently restoring the frozen device) is what reliably brings
+# the display back. StreamController pairs this with a boottime-based resume
+# reconnect (usbmonitor doesn't see the connect/disconnect uevents that fire
+# during the suspend/resume transition). Scoped to the usb_device per MiraBox
+# vendor id so power/persist isn't written on USB interfaces.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5500", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="5548", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6602", ATTR{power/persist}="0"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="6603", ATTR{power/persist}="0"

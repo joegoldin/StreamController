@@ -133,6 +133,13 @@ class ScreenSaver:
             self.deck_controller.load_default_page()
         self.set_time(self.time_delay)
 
+        # Some single-screen StreamDock panels can keep accepting input while
+        # ignoring display writes after lock. Queue display reinitialization after
+        # the restored page's image writes have populated the device cache.
+        reinit_display = getattr(self.deck_controller.deck, "reinit_display", None)
+        if callable(reinit_display):
+            self.deck_controller.media_player.add_post_task(reinit_display)
+
     def on_key_change(self):
         self.last_key_change_time = time.time()
         if self.showing:
