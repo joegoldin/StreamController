@@ -250,6 +250,10 @@ class App(Adw.Application):
     def on_quit(self, *args):
         log.info("Quitting...")
 
+        # Unload compositor scripts before the main loop and D-Bus API stop.
+        if gl.window_grabber is not None and gl.window_grabber.integration is not None:
+            gl.window_grabber.integration.stop()
+
         # Stop DBus API service
         if not gl.IS_MAC:
             stop_dbus_service()

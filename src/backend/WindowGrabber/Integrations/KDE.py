@@ -11,190 +11,214 @@ This programm comes with ABSOLUTELY NO WARRANTY!
 
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
-"""
 
-import threading
-import time
+KWin window tracking through one persistent, event-driven script.
+"""
+import json
+from pathlib import Path
+import tempfile
+import uuid
+from typing import TYPE_CHECKING
+
+from gi.repository import Gio, GLib
+from loguru import logger as log
+
 from src.backend.WindowGrabber.Integration import Integration
 from src.backend.WindowGrabber.Window import Window
 
-from subprocess import Popen, CalledProcessError, PIPE
-from loguru import logger as log
-
-# Import globals first to get IS_MAC
-import globals as gl
-
-import gi
-
-if not gl.IS_MAC:
-    gi.require_version("Xdp", "1.0")
-    from gi.repository import Xdp
-
-# Import typing
-from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from src.backend.WindowGrabber.WindowGrabber import WindowGrabber
 
 
+CALLBACK_XML = """<node><interface name="com.core447.StreamController.WindowWatcher">
+<method name="UpdateWindows"><arg type="s" direction="in"/><arg type="s" direction="in"/></method>
+</interface></node>"""
+
+
 class KDE(Integration):
+    DBUS_INTERFACE = "com.core447.StreamController.WindowWatcher"
+
     def __init__(self, window_grabber: "WindowGrabber"):
         super().__init__(window_grabber=window_grabber)
+        self.DBUS_PATH = "/com/core447/StreamController/WindowWatcher/" + uuid.uuid4().hex
+        self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self._owner = None
+        self._windows = []
+        self._active_window = None
+        self._generation = 0
+        self._cancellable = Gio.Cancellable()
+        self._script_file = None
+        # A stable name also removes a script left behind by an app crash.
+        self._script_name = "streamcontroller-window-watcher"
+        self._retry_source = 0
+        self._retry_delay = 1
+        self._registration = self._bus.register_object(
+            self.DBUS_PATH, Gio.DBusNodeInfo.new_for_xml(CALLBACK_XML).interfaces[0],
+            self._receive_windows, None, None,
+        )
+        # Do not auto-start a compositor or poll a missing service. A fresh owner
+        # installs a fresh script, including after a compositor restart.
+        self._watch = Gio.bus_watch_name_on_connection(
+            self._bus, "org.kde.KWin", Gio.BusNameWatcherFlags.NONE,
+            self._name_appeared, self._name_vanished,
+        )
 
-        self.flatpak = False
-        if not gl.IS_MAC:
-            portal = Xdp.Portal.new()
-            self.flatpak = portal.running_under_flatpak()
+    def _name_appeared(self, connection, name, owner):
+        if not self.running:
+            return
+        self._reset()
+        self._owner = owner
+        self._retry_delay = 1
+        self._install_script()
 
-        self.is_kdotool_installed = self.get_is_kdotool_installed()
+    def _name_vanished(self, connection, name):
+        self._reset()
+        self._owner = None
 
-        if self.is_kdotool_installed:
-            self.start_active_window_change_thread()
+    def _reset(self, unload=False):
+        self._generation += 1
+        self._cancellable.cancel()
+        self._cancellable = Gio.Cancellable()
+        if self._retry_source:
+            GLib.source_remove(self._retry_source)
+            self._retry_source = 0
+        if self._script_file is not None:
+            if unload and self._owner:
+                self._bus.call(
+                    self._owner, "/Scripting", "org.kde.kwin.Scripting", "unloadScript",
+                    GLib.Variant("(s)", (self._script_name,)), None,
+                    Gio.DBusCallFlags.NO_AUTO_START, 1500, None, self._unloaded,
+                )
+            self._script_file.unlink(missing_ok=True)
+            self._script_file = None
+        self._windows = []
+        self._active_window = None
 
-    @log.catch
-    def _run_command(self, command: list[str]) -> Optional[Popen]:
-        if self.flatpak:
-            command.insert(0, "flatpak-spawn")
-            command.insert(1, "--host")
+    @staticmethod
+    def _unloaded(connection, result):
         try:
-            return Popen(command, stdout=PIPE, cwd="/")
-        except Exception as e:
-            log.error(f"An error occurred while running {command}: {e}")
+            connection.call_finish(result)
+        except GLib.Error as error:
+            log.debug(f"KWin watcher cleanup failed: {error.message}")
 
-    @log.catch
-    def get_is_kdotool_installed(self) -> bool:
+    def _call(self, path, interface, method, parameters, callback):
+        generation = self._generation
+
+        def finished(connection, result):
+            try:
+                reply = connection.call_finish(result)
+            except GLib.Error as error:
+                if self.running and generation == self._generation:
+                    self._install_failed(error.message)
+                return
+            if self.running and generation == self._generation:
+                callback(reply)
+
+        self._bus.call(self._owner, path, interface, method, parameters, None,
+                       Gio.DBusCallFlags.NO_AUTO_START, 1500, self._cancellable, finished)
+
+    def _install_script(self):
+        if not self.running or not self._owner:
+            return
+        self._call("/Scripting", "org.kde.kwin.Scripting", "unloadScript",
+                   GLib.Variant("(s)", (self._script_name,)), self._write_script)
+
+    def _write_script(self, reply):
         try:
-            out = self._run_command(["kdotool", "--version"]).communicate()[0].decode("utf-8")
-            return out not in ("", None)
-        except Exception as e:
-            log.error(f"An error occurred while running kdotool: {e}")
-            return False
+            # Unlike /tmp, the app cache is host-visible in Flatpak, so KWin
+            # can read it without a flatpak-spawn helper or per-event process.
+            directory = Path(GLib.get_user_cache_dir()) / "streamcontroller" / "kwin"
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", prefix="watcher-", suffix=".js", dir=directory, delete=False) as script:
+                self._script_file = Path(script.name)
+                script.write(self._script_source())
+        except OSError as error:
+            self._install_failed(str(error))
+            return
+        self._call("/Scripting", "org.kde.kwin.Scripting", "loadScript",
+                   GLib.Variant("(ss)", (str(self._script_file), self._script_name)), self._script_loaded)
 
-    @log.catch
-    def start_active_window_change_thread(self):
-        self.active_window_change_thread = WatchForActiveWindowChange(self)
-        self.active_window_change_thread.start()
+    def _script_loaded(self, reply):
+        script_id = reply.unpack()[0]
+        if script_id < 0:
+            self._install_failed("KWin rejected the window watcher script")
+            return
+        self._call(f"/Scripting/Script{script_id}", "org.kde.kwin.Script", "run", None, self._script_running)
 
-    @log.catch
+    def _script_running(self, reply):
+        self._retry_delay = 1
+
+    def _install_failed(self, reason):
+        owner = self._owner
+        self._reset(unload=True)
+        if not self.running or not owner:
+            return
+        log.warning(f"KWin window watcher unavailable; retrying in {self._retry_delay}s: {reason}")
+        self._retry_source = GLib.timeout_add_seconds(self._retry_delay, self._retry_install)
+        self._retry_delay = min(self._retry_delay * 2, 60)
+
+    def _retry_install(self):
+        self._retry_source = 0
+        self._install_script()
+        return GLib.SOURCE_REMOVE
+
+    def _script_source(self):
+        destination = json.dumps(self._bus.get_unique_name())
+        path = json.dumps(self.DBUS_PATH)
+        interface = json.dumps(self.DBUS_INTERFACE)
+        return f"""
+function windowId(window) {{ return window ? window.internalId.toString() : ""; }}
+function publish() {{
+    const windows = workspace.windowList().filter(window => window.normalWindow).map(window => ({{
+        id: windowId(window), wm_class: window.resourceClass.toString(), title: window.caption.toString()
+    }}));
+    callDBus({destination}, {path}, {interface}, "UpdateWindows",
+             JSON.stringify(windows), windowId(workspace.activeWindow));
+}}
+function watch(window) {{ window.captionChanged.connect(publish); }}
+workspace.windowList().forEach(watch);
+workspace.windowAdded.connect(function(window) {{ watch(window); publish(); }});
+workspace.windowRemoved.connect(publish);
+workspace.windowActivated.connect(publish);
+publish();
+"""
+
+    def _receive_windows(self, connection, sender, path, interface, method, parameters, invocation):
+        # Only the compositor that owns this generation may publish window data.
+        if not self.running or sender != self._owner:
+            invocation.return_dbus_error(self.DBUS_INTERFACE + ".AccessDenied", "Not the current KWin owner")
+            return
+        try:
+            serialized, active_id = parameters.unpack()
+            rows = json.loads(serialized)
+            if not isinstance(rows, list) or any(
+                not isinstance(row, dict) or any(not isinstance(row.get(key), str) for key in ("id", "wm_class", "title"))
+                for row in rows
+            ):
+                raise ValueError("Invalid window snapshot")
+        except (ValueError, TypeError):
+            invocation.return_dbus_error(self.DBUS_INTERFACE + ".InvalidArgs", "Invalid window snapshot")
+            return
+        self._windows = [Window(row["wm_class"], row["title"]) for row in rows]
+        active = next((window for row, window in zip(rows, self._windows) if row["id"] == active_id), None)
+        previous = self._active_window
+        self._active_window = active
+        # Reply before page switching; rendering or plugin work must not hold a
+        # compositor D-Bus call open or accumulate pending replies.
+        invocation.return_value(None)
+        if active is not None and active != previous:
+            self.window_grabber.on_active_window_changed(active)
+
     def get_all_windows(self) -> list[Window]:
-        windows: list[Window] = []
+        return list(self._windows)
 
-        try:
-            root = self._run_command(["kdotool", "search", "."])
-            if root is None:
-                return []
-            stdout, _ = root.communicate()
+    def get_active_window(self) -> Window | None:
+        return self._active_window
 
-            window_ids = stdout.decode().strip().split("\n")
-            if len(window_ids) < 2:
-                return windows
-        except CalledProcessError as e:
-            log.error(f"An error occurred while running kdotool: {e}")
-            return windows
-
-        for window_id in window_ids:
-            window = self.get_window(window_id)
-            if window is not None:
-                windows.append(window)
-
-        return windows
-
-    @log.catch
-    def get_active_window_id(self) -> Optional[str]:
-        try:
-            kdotool = self._run_command(["kdotool", "getactivewindow"])
-            if kdotool is None:
-                return
-            stdout, _ = kdotool.communicate()
-            window_id = stdout.decode().strip()
-            if len(window_id) == 0:
-                return
-            return window_id
-        except CalledProcessError as e:
-            log.error(f"An error occurred while running kdotool: {e}")
-
-    @log.catch
-    def get_active_window(self) -> Window:
-        window_id = self.get_active_window_id()
-        if window_id is None:
+    def stop(self):
+        if not self.running:
             return
-        return self.get_window(window_id)
-
-    @log.catch
-    def get_window(self, window_id: str) -> Optional[Window]:
-        title = self.get_title(window_id)
-        class_name = self.get_class(window_id)
-        if title is None or class_name is None:
-            return
-        return Window(class_name, title)
-
-    @log.catch
-    def get_title(self, window_id: str) -> Optional[str]:
-        try:
-            kdotool = self._run_command(["kdotool", "getwindowname", window_id])
-            if kdotool is None:
-                return
-            title = kdotool.communicate()[0].decode().strip()
-            if title is None:
-                return
-            if title == "":
-                # When the desktop (plasmashell) has an empty title and
-                # rejecting it means minimising every window is never seen as a
-                # window change, so auto-change pages never fall back.
-                time.sleep(0.1)
-                kdotool = self._run_command(["kdotool", "getwindowname", window_id])
-                if kdotool is None:
-                    return
-                title = kdotool.communicate()[0].decode().strip()
-            return title
-        except CalledProcessError as e:
-            log.error(f"An error occurred while running kdotool: {e}")
-
-    @log.catch
-    def get_class(self, window_id: str) -> Optional[str]:
-        try:
-            kdotool = self._run_command(["kdotool", "getwindowclassname", window_id])
-            if kdotool is None:
-                return
-            window_class = kdotool.communicate()[0].decode().strip()
-            if window_class is None or len(window_class) < 4:
-                return
-            return window_class
-        except CalledProcessError as e:
-            log.error(f"An error occurred while running kdotool: {e}")
-
-
-class WatchForActiveWindowChange(threading.Thread):
-    def __init__(self, kde: KDE):
-        super().__init__(name="WatchForActiveWindowChange", daemon=True)
-        self.kde = kde
-
-        self.last_window_id: Optional[str] = None
-        self.last_active_window: Optional[Window] = None
-
-        window_id = self.kde.get_active_window_id()
-        if window_id is not None:
-            self.last_window_id = window_id
-            self.last_active_window = self.kde.get_window(window_id)
-
-    @log.catch
-    def run(self) -> None:
-        # self.kde.running is cleared by Integration.stop() when this KDE
-        # integration is replaced, so a re-init doesn't leave this thread
-        # polling kdotool forever (the cause of the watcher-thread pile-up).
-        while gl.threads_running and self.kde.running:
-            time.sleep(0.2)
-            window_id = self.kde.get_active_window_id()
-            if window_id is None:
-                continue
-            if window_id == self.last_window_id:
-                continue
-
-            self.last_window_id = window_id
-            new_active_window = self.kde.get_window(window_id)
-            if new_active_window is None:
-                continue
-            if new_active_window == self.last_active_window:
-                continue
-
-            self.last_active_window = new_active_window
-            self.kde.window_grabber.on_active_window_changed(new_active_window)
+        super().stop()
+        Gio.bus_unwatch_name(self._watch)
+        self._reset(unload=True)
+        self._bus.unregister_object(self._registration)

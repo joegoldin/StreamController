@@ -16,6 +16,7 @@ finish-args:
   - --talk-name=org.freedesktop.Flatpak       # Allow plugins to run system commands
   - --talk-name=org.mpris.MediaPlayer2.*      # Media control
   - --talk-name=org.kde.kdeconnect            # Access to KDEConnect
+  - --talk-name=org.kde.KWin                  # Event-driven foreground-window tracking
   - --talk-name=org.gnome.Shell               # Interact with Gnome - used to open the "Install extension" dialog
   - --talk-name=org.gnome.Shell.Extensions.StreamController
   - --talk-name=org.gnome.ScreenSaver
