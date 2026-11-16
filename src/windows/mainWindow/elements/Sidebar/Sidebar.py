@@ -386,10 +386,10 @@ class KeyEditor(Gtk.Box):
         # background editors for them.
         is_screenless = False
         if isinstance(identifier, Input.Key):
-            getter = getattr(controller.deck.deck, "screenless_key_indices", None)
+            getter = getattr(controller.deck, "screenless_key_indices", None)
             if callable(getter):
                 try:
-                    is_screenless = controller.deck.get_physical_index(controller.coords_to_index(identifier.coords)) in getter()
+                    is_screenless = controller.coords_to_index(identifier.coords) in getter()
                 except Exception:
                     is_screenless = False
 

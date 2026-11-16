@@ -59,7 +59,7 @@ class DialBox(Gtk.Box):
         # knob) so we can render them bigger. Decks without the hint (Elgato)
         # keep every dial uniform.
         large_indices = set()
-        getter = getattr(deck.deck, "large_dial_indices", None)
+        getter = getattr(deck, "large_dial_indices", None)
         if callable(getter):
             try:
                 large_indices = set(getter())
@@ -70,7 +70,7 @@ class DialBox(Gtk.Box):
         if large_indices:
             self.set_homogeneous(False)
         for i in range(deck.dial_count()):
-            dial = Dial(self, Input.Dial(str(i)), large=(deck.get_physical_dial_index(i) in large_indices))
+            dial = Dial(self, Input.Dial(str(i)), large=(i in large_indices))
             self.dials.append(dial)
             self.append(dial)
 

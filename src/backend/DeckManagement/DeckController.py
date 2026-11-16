@@ -34,7 +34,7 @@ from StreamDeck.Devices.StreamDeckNeo import StreamDeckNeo
 from loguru import logger as log
 
 # Import own modules
-from StreamDeck.Devices.RotatedDeck import RotatedDeck
+from src.backend.DeckManagement.BetterDeck import BetterDeck
 from src.backend.DeckManagement.HelperMethods import *
 from src.backend.DeckManagement.ImageHelpers import *
 from src.backend.DeckManagement.InputIdentifier import Input, InputEvent, InputIdentifier
@@ -768,7 +768,7 @@ class DeckController:
             del self
             return
 
-        self.deck: RotatedDeck = RotatedDeck(deck, rotation)
+        self.deck: BetterDeck = BetterDeck(deck, rotation)
 
         try:
             # Clear the deck

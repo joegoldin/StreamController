@@ -69,7 +69,8 @@ class _DeckController:
     def clear(self):
         pass
 
-    def load_page(self, page, allow_reload=False):
+    def load_page(self, page, allow_reload=False, force_background_reload=False):
+        self.force_background_reload = force_background_reload
         self.loaded_pages.append((page, allow_reload))
         self.deck.events.append("load_page")
 
@@ -82,6 +83,12 @@ class _CachingDeck:
     def __init__(self):
         self.images = {}
         self.display_snapshots = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
     def is_touch(self):
         return False
@@ -130,6 +137,7 @@ class LockScreenPanelTests(unittest.TestCase):
             if screen_saver.timer:
                 screen_saver.timer.cancel()
 
+        self.assertTrue(controller.force_background_reload)
         self.assertFalse(screen_saver.showing)
         self.assertEqual(controller.loaded_pages, [(controller.active_page, True)])
         self.assertEqual(deck.events, ["load_page", "queue_post_task"])

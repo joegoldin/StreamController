@@ -142,9 +142,9 @@ class KeyButton(Gtk.Frame):
         # dynamic key image (set_image) since they have no display.
         self.is_screenless = False
         try:
-            getter = getattr(key_grid.deck_controller.deck.deck, "screenless_key_indices", None)
+            getter = getattr(key_grid.deck_controller.deck, "screenless_key_indices", None)
             if callable(getter):
-                self.is_screenless = key_grid.deck_controller.deck.get_physical_index(key_grid.deck_controller.coords_to_index(coords)) in getter()
+                self.is_screenless = key_grid.deck_controller.coords_to_index(coords) in getter()
         except Exception:
             self.is_screenless = False
 
