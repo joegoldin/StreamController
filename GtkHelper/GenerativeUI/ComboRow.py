@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from src.backend.PluginManager.ActionCore import ActionCore
 
 from GtkHelper.GtkHelper import better_disconnect
+from GtkHelper.main_thread import run_on_main
 
 
 class ComboRow(GenerativeUI[BaseComboRowItem]):
@@ -173,6 +174,9 @@ class ComboRow(GenerativeUI[BaseComboRowItem]):
     def get_item_amount(self):
         return self.widget.get_item_amount()
 
+    # Observers run on workers; detach, refill, bind and callbacks must be atomic
+    # on the GTK thread, including signal disconnection/reconnection.
+    @run_on_main
     @GenerativeUI.signal_manager
     def populate(self, items: list[BaseComboRowItem] | list[str], selected_item: BaseComboRowItem | str = "",
                  update_settings: bool = False,
